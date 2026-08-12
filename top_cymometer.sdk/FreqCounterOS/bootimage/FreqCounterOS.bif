@@ -1,7 +1,7 @@
 //arch = zynq; split = false; format = BIN
 the_ROM_image:
 {
-	[bootloader]D:\Vivado\counter\top_cymometer.sdk\FSBL\Debug\FSBL.elf
-	D:\Vivado\counter\top_cymometer.sdk\ps_wrapper_hw_platform_0\ps_wrapper.bit
-	D:\Vivado\counter\top_cymometer.sdk\FreqCounterOS\Debug\FreqCounterOS.elf
+	[bootloader]D:\Vivado\CounterCode\top_cymometer.sdk\FSBL\Debug\FSBL.elf
+	D:\Vivado\CounterCode\top_cymometer.sdk\ps_wrapper_hw_platform_0\ps_wrapper.bit
+	D:\Vivado\CounterCode\top_cymometer.sdk\FreqCounterOS\Debug\FreqCounterOS.elf
 }
