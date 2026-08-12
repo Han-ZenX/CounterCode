@@ -26,8 +26,8 @@ XilInitFiles.1.tcl/
 # =====================================================
 .sdk/
 *.srec
-*.bin
-*.elf
+!*.bin
+!*.elf
 *.elf.bootimage
 *.elf.user
 Makefile
