@@ -1,0 +1,4 @@
+#Thu Aug 06 14:08:48 CST 2026
+__DEFAULT__=false
+org.eclipse.help.ui.localSearch.master=true
+expression=Waiting for PHY to complete autonegotiation

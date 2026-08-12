@@ -1,0 +1,132 @@
+/*
+ * freq_counter.h
+ *
+ *  Created on: 2025骞�4鏈�11鏃�
+ *      Author: hanzheng
+ */
+
+#ifndef SRC_FREQ_COUNTER_FREQ_COUNTER_H_
+#define SRC_FREQ_COUNTER_FREQ_COUNTER_H_
+
+#include "xil_types.h"
+#include "xparameters.h"
+#include "xuartps.h"
+#include "xil_printf.h"
+#include "xscugic.h"
+#include "stdio.h"
+#include <math.h>
+#include <String.h>
+
+#include "ff.h"
+
+#include "Counter_Sig.h"
+#include "top_cymometer_ip.h"
+#include "xparameters.h"
+
+#define COUNTER_SIG_IP_BASEADDR XPAR_COUNTER_SIG_0_S_AXI_BASEADDR
+#define COUNTER_SIG_IP_REG0 COUNTER_SIG_S_AXI_SLV_REG0_OFFSET
+
+
+#define TOP_CYMOMETER_IP_BASEADDR XPAR_TOP_CYMOMETER_IP_0_S0_AXI_BASEADDR
+#define TOP_CYMOMETER_IP_REG0 TOP_CYMOMETER_IP_S0_AXI_SLV_REG0_OFFSET
+#define TOP_CYMOMETER_IP_REG1 TOP_CYMOMETER_IP_S0_AXI_SLV_REG1_OFFSET
+#define TOP_CYMOMETER_IP_REG2 TOP_CYMOMETER_IP_S0_AXI_SLV_REG2_OFFSET
+#define TOP_CYMOMETER_IP_REG3 TOP_CYMOMETER_IP_S0_AXI_SLV_REG3_OFFSET
+#define TOP_CYMOMETER_IP_REG4 TOP_CYMOMETER_IP_S0_AXI_SLV_REG4_OFFSET
+#define TOP_CYMOMETER_IP_REG5 TOP_CYMOMETER_IP_S0_AXI_SLV_REG5_OFFSET
+#define TOP_CYMOMETER_IP_REG6 TOP_CYMOMETER_IP_S0_AXI_SLV_REG6_OFFSET
+#define TOP_CYMOMETER_IP_REG7 TOP_CYMOMETER_IP_S0_AXI_SLV_REG7_OFFSET
+#define TOP_CYMOMETER_IP_REG8 TOP_CYMOMETER_IP_S0_AXI_SLV_REG8_OFFSET
+#define TOP_CYMOMETER_IP_REG9 TOP_CYMOMETER_IP_S0_AXI_SLV_REG9_OFFSET
+#define TOP_CYMOMETER_IP_REG10 TOP_CYMOMETER_IP_S0_AXI_SLV_REG10_OFFSET
+#define TOP_CYMOMETER_IP_REG11 TOP_CYMOMETER_IP_S0_AXI_SLV_REG11_OFFSET
+#define TOP_CYMOMETER_IP_REG12 TOP_CYMOMETER_IP_S0_AXI_SLV_REG12_OFFSET
+#define TOP_CYMOMETER_IP_REG13 TOP_CYMOMETER_IP_S0_AXI_SLV_REG13_OFFSET
+#define TOP_CYMOMETER_IP_REG14 TOP_CYMOMETER_IP_S0_AXI_SLV_REG14_OFFSET
+#define TOP_CYMOMETER_IP_REG15 TOP_CYMOMETER_IP_S0_AXI_SLV_REG15_OFFSET
+#define TOP_CYMOMETER_IP_REG16 TOP_CYMOMETER_IP_S0_AXI_SLV_REG16_OFFSET
+#define TOP_CYMOMETER_IP_REG17 TOP_CYMOMETER_IP_S0_AXI_SLV_REG17_OFFSET
+#define TOP_CYMOMETER_IP_REG18 TOP_CYMOMETER_IP_S0_AXI_SLV_REG18_OFFSET //CTR_START_T
+
+// TDC registers - sub-cycle time measurements
+#define TOP_CYMOMETER_IP_REG19 TOP_CYMOMETER_IP_S0_AXI_SLV_REG19_OFFSET // TDC鍩哄噯鍩熶笂鍗囨部
+#define TOP_CYMOMETER_IP_REG20 TOP_CYMOMETER_IP_S0_AXI_SLV_REG20_OFFSET // TDC鍩哄噯鍩熶笅闄嶆部
+#define TOP_CYMOMETER_IP_REG21 TOP_CYMOMETER_IP_S0_AXI_SLV_REG21_OFFSET // TDC琚祴鍩熶笂鍗囨部
+#define TOP_CYMOMETER_IP_REG22 TOP_CYMOMETER_IP_S0_AXI_SLV_REG22_OFFSET // TDC琚祴鍩熶笅闄嶆部
+
+// Timestamp engine registers
+#define TOP_CYMOMETER_IP_REG23 TOP_CYMOMETER_IP_S0_AXI_SLV_REG23_OFFSET // ts_mode[1:0]
+#define TOP_CYMOMETER_IP_REG24 TOP_CYMOMETER_IP_S0_AXI_SLV_REG24_OFFSET // edge_skip
+#define TOP_CYMOMETER_IP_REG25 TOP_CYMOMETER_IP_S0_AXI_SLV_REG25_OFFSET // fifo_status
+#define TOP_CYMOMETER_IP_REG26 TOP_CYMOMETER_IP_S0_AXI_SLV_REG26_OFFSET // fifo_rd_addr
+#define TOP_CYMOMETER_IP_REG27 TOP_CYMOMETER_IP_S0_AXI_SLV_REG27_OFFSET // fifo_data_cnt
+#define TOP_CYMOMETER_IP_REG28 TOP_CYMOMETER_IP_S0_AXI_SLV_REG28_OFFSET // fifo_data_tdc
+
+#define CLK_FS_FREQ 312500000  // 鍩哄噯鏃堕挓棰戠巼榛樿鍊� 312.5MHz (Hz)
+#define CLK_FS_FREQ_FILE "0:/FREQ.TXT"  // SD鍗￠鐜囬厤缃枃浠惰矾寰� (8.3鐭枃浠跺悕)
+
+#define TDC_NUM_TAPS 64  // TDC寤惰繜閾剧骇鏁帮紝涓嶧PGA涓璗DC妯″潡鍖归厤
+
+extern u32 g_clk_fs_freq;  // SD鍗″姞杞界殑鍩哄噯鏃堕挓棰戠巼 (Hz)
+extern u32 g_clk_fs_freq_sd; // SD鍗￠鐜囩紦瀛� (Hz)
+
+extern int FREF; //鍙傝�冮鐜�
+
+extern double START_T_TIME;  //鍗曚綅ms
+
+extern int START_T_END;
+
+extern int PPM; //ppm
+
+extern double GATE_TIME; //ms
+
+extern double START_GATE_TIME; //ms
+
+int init_freqcounter(void);
+
+int SetCntGateMax(u32 cntgatemax);
+
+int SetCntGateLow(u32 cntgatelow);
+
+int SetClkFsFreq(u32 clkfsfreq);
+
+int SetGate(double msec);
+
+int Set_CTR_PRIREF(u32 CTR_PRIREF);
+
+int Set_CTR_REF_CLOCK(u32 CTR_REF_CLOCK);
+
+int Set_CTR_OCXO(u32 CTR_OCXO);
+
+u32 ReadSTATUS0(void);
+
+u32 ReadSTATUS1(void);
+
+int SetRESET(u32 RESET);
+
+int SetGATE(u32 GATE);
+
+int ReadFr(char * Freq);
+
+double ReadStartT(char * Freq);
+
+void InitStartT(void *p);
+
+// SD card clock frequency functions
+u32 LoadClkFsFreq(void);
+int SaveClkFsFreq(u32 freq);
+u32 GetClkFsFreq(void);
+
+// TDC functions
+u32 ReadTdcRefRise(void);
+u32 ReadTdcRefFall(void);
+u32 ReadTdcTestRise(void);
+u32 ReadTdcTestFall(void);
+int ReadFr_TDC(char * Freq);  // ReadFr with TDC correction
+
+// Timestamp engine functions
+int ReadTimestamps(double *timestamps, int max_count, int edge_skip);
+double ComputeFreqFromTimestamps(double *timestamps, int count);
+int ReadFr_TimestampMode(char *Freq);
+
+#endif /* SRC_FREQ_COUNTER_FREQ_COUNTER_H_ */

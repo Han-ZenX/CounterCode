@@ -1,0 +1,204 @@
+# =====================================================
+# GitIgnore for Xilinx Vivado/SDK FPGA Project
+# =====================================================
+
+# =====================================================
+# Xilinx Vivado Generated Files and Directories
+# =====================================================
+.cache/
+.hw/
+.ip_user_files/
+*.cache/
+*.runs/
+*.sim/
+*.tmp/
+*.jou
+*.log
+backup*
+
+# Vivado project files
+*.xpr.user
+*.xcsa
+XilInitFiles.1.tcl/
+
+# =====================================================
+# Xilinx SDK Generated Files
+# =====================================================
+.sdk/
+*.srec
+*.bin
+*.elf
+*.elf.bootimage
+*.elf.user
+Makefile
+Debug/*
+!Debug/.gitignore
+!Debug/*.cproject
+!Debug/*.project
+.cdtsettings
+.core
+.executable
+.launch
+.locks
+.msystem
+.project
+.settings/
+*.tmptools
+*.tclproj
+*.cproject.user
+*.launch
+*.elf.symbols
+*.mcs
+*.pdi
+
+# SD Card related files (保留 .bin 和 .bit 文件)
+sd_card/!*.bin
+sd_card/!*.bit
+sd_card/*.hex
+
+# =====================================================
+# IP Repository Management
+# =====================================================
+ip_repo/*/hdl/build/
+ip_repo/*/src/build/
+ip_repo/*/impl/
+ip_repo/*/msgs/
+
+# Managed IP Projects
+managed_ip_project*/
+*.tmp/
+
+# =====================================================
+# Simulation and Synthesis Outputs
+# =====================================================
+behavioral/
+physical/
+synth_1/
+implement_1/
+simulate_1/
+*.vcd
+*.wdb
+*.shmem
+*.lwp
+*.wif
+wave*.shm
+sim*.xml
+
+# =====================================================
+# Build Artifacts
+# =====================================================
+BitGen.log
+glbl.v
+hierarchical_timing.xml
+par_report_summary.html
+phys_opt_design_report.html
+pld_template.jed
+program_hw_ucf.tcl
+timing_routed.rpt
+unisims.sh
+utilization.rpt
+usage.xml
+
+# =====================================================
+# IDE and Editor Files
+# =====================================================
+# Visual Studio Code
+.vscode/**
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Emacs
+*~
+\#*\#
+.emacs.desktop
+.elc
+
+# Vim
+*.swp
+*.swo
+*.state
+.nodetags
+
+# Windows Thumbnail cache
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =====================================================
+# Operating System Files
+# =====================================================
+# macOS
+.DS_Store
+.AppleDouble
+.Spotlight-V100
+.Trashes
+__MACOSX
+
+# Linux
+.*.swp
+.swap
+
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+NTFS$
+
+# =====================================================
+# Logs and Debugging
+# =====================================================
+*.trace
+hs_err_pid*.log
+hs_err_pid*.dmp
+error_log.txt
+crash_dump.txt
+
+# =====================================================
+# Temporary and Backup Files
+# =====================================================
+*.bak
+*.orig
+*.temp
+*.new
+~*.txt
+*_old/*
+_backup/
+archive/
+
+# =====================================================
+# Specific to this Frequency Meter Project
+# =====================================================
+# Measurement data files (if any)
+FREQ.TXT
+clk_fs_freq.txt
+*.data
+measurement_*.csv
+
+# Generated configuration files
+generated_config.h
+local_override.tcl
+custom_settings.tcl
+
+# =====================================================
+# Documentation (optional - remove if you want to keep docs)
+# =====================================================
+# *.pdf
+# *.html
+# /docs/build/
+
+# =====================================================
+# Do NOT ignore these important files
+# =====================================================
+# Keep:
+# - .gitignore itself
+# - README.md
+# - LICENSE
+# - All .v, .tcl, .xdc source files
+# - All SDK source files (.c, .h in src directories)
+# - Project.xpr file (can regenerate other files)
+# - Bitstream sources if you have them committed separately
+# - BIN and BIT files in sd_card directory
+# - BOOT.bin for deployment

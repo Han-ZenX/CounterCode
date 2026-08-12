@@ -1,0 +1,5 @@
+set_property SRC_FILE_INFO {cfile:D:/Vivado/top_cymometer/top_cymometer.srcs/constrs_1/new/top_cymometer.xdc rfile:../top_cymometer.srcs/constrs_1/new/top_cymometer.xdc id:1} [current_design]
+set_property src_info {type:XDC file:1 line:38 export:INPUT save:INPUT read:READ} [current_design]
+set_property -dict {PACKAGE_PIN L17 IOSTANDARD LVCMOS33} [get_ports lcd_rst]
+set_property src_info {type:XDC file:1 line:41 export:INPUT save:INPUT read:READ} [current_design]
+set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets clk_fx_IBUF]

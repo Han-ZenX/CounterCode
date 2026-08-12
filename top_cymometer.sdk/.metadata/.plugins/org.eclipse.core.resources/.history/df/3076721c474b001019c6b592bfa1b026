@@ -1,0 +1,402 @@
+/*
+ * Copyright (C) 2018 Xilinx, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ * 3. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+ * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+ * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+ * OF SUCH DAMAGE.
+ *
+ */
+
+#include "tcp_perf_server.h"
+
+extern struct netif server_netif;
+static struct tcp_pcb *c_pcb;
+static struct perf_stats server;
+
+char Tcp_Rec_Buf[300];
+
+//杈撳嚭搴旂敤淇℃伅
+void print_app_header(void)
+{
+    xil_printf("TCP server listening on port %d\r\n",TCP_CONN_PORT);
+
+#if LWIP_IPV6==1
+    xil_printf("On Host: Run $iperf -V -c %s%%<interface> -i %d -t 300 -w 2M\r\n",
+            inet6_ntoa(server_netif.ip6_addr[0]),
+            INTERIM_REPORT_INTERVAL);
+#else
+    xil_printf("On Host: Run $iperf -c %s -i %d -t 300 -w 2M\r\n",
+            inet_ntoa(server_netif.ip_addr),
+            INTERIM_REPORT_INTERVAL);
+#endif
+}
+
+//杈撳嚭tcp杩炴帴鐘舵�佷俊鎭�
+static void print_tcp_conn_stats(void)
+{
+#if LWIP_IPV6==1
+    xil_printf("[%3d] local %s port %d connected with ",
+            server.client_id, inet6_ntoa(c_pcb->local_ip),
+            c_pcb->local_port);
+    xil_printf("%s port %d\r\n",inet6_ntoa(c_pcb->remote_ip),
+            c_pcb->remote_port);
+#else
+    xil_printf("[%3d] local %s port %d connected with ",
+            server.client_id, inet_ntoa(c_pcb->local_ip),
+            c_pcb->local_port);
+    xil_printf("%s port %d\r\n",inet_ntoa(c_pcb->remote_ip),
+            c_pcb->remote_port);
+#endif
+
+    xil_printf("[ ID] Interval\t\tTransfer   Bandwidth\n\r");
+}
+
+static void stats_buffer(char* outString, double data, enum measure_t type)
+{
+    int conv = KCONV_UNIT;
+    const char *format;
+    double unit = 1024.0;
+
+    if (type == SPEED)
+        unit = 1000.0;
+
+    while (data >= unit && conv <= KCONV_GIGA) {
+        data /= unit;
+        conv++;
+    }
+
+    if (data < 9.995) {         // 9.995鍥涜垗浜斿叆鍒�10.0
+        format = "%4.2f %c";    // #.##
+    } else if (data < 99.95) {  // 99.95鍥涜垗浜斿叆鍒�100
+        format = "%4.1f %c";    // ##.#
+    } else {
+        format = "%4.0f %c";    // ####
+    }
+    sprintf(outString, format, data, kLabel[conv]);
+}
+
+
+//TCP鏈嶅姟鍣ㄤ細璇濈殑report鍑芥暟
+static void tcp_conn_report(u64_t diff,
+        enum report_type report_type)
+{
+    u64_t total_len;
+    double duration, bandwidth = 0;
+    char data[16], perf[16], time[64];
+
+    if (report_type == INTER_REPORT) {
+        total_len = server.i_report.total_bytes;
+    } else {
+        server.i_report.last_report_time = 0;
+        total_len = server.total_bytes;
+    }
+
+    //灏嗘寔缁椂闂翠粠姣杞崲涓虹锛屽甫瀹借浆鎹负姣旂壒/绉�
+    duration = diff / 1000.0;   //secs
+    if (duration)
+        bandwidth = (total_len / duration) * 8.0;
+
+    stats_buffer(data, total_len, BYTES);
+    stats_buffer(perf, bandwidth, SPEED);
+    //鍦�32浣嶅钩鍙颁笂锛寈il_printf鏃犳硶鎵撳嵃u64_t鍊硷紝鍥犳鍦ㄥ瓧绗︿覆涓浆鎹㈣繖浜涘�煎苟鏄剧ず缁撴灉
+    sprintf(time, "%4.1f-%4.1f sec",
+            (double)server.i_report.last_report_time,
+            (double)(server.i_report.last_report_time + duration));
+    xil_printf("[%3d] %s  %sBytes  %sbits/sec\n\r", server.client_id,
+            time, data, perf);
+
+    if (report_type == INTER_REPORT)
+        server.i_report.last_report_time += duration;
+}
+
+//TCP鏈嶅姟鍣ㄥ叧闂細璇�
+static void tcp_server_close(struct tcp_pcb *pcb)
+{
+    err_t err;
+
+    if (pcb != NULL) {
+        tcp_recv(pcb, NULL);
+        tcp_err(pcb, NULL);
+        err = tcp_close(pcb);
+        if (err != ERR_OK) {
+            tcp_abort(pcb);
+        }
+    }
+}
+
+//閿欒鍥炶皟锛宼cp浼氳瘽涓
+static void tcp_server_err(void *arg, err_t err)
+{
+    LWIP_UNUSED_ARG(err);
+    u64_t now = get_time_ms();
+    u64_t diff_ms = now - server.start_time;
+    tcp_server_close(c_pcb);
+    c_pcb = NULL;
+    tcp_conn_report(diff_ms, TCP_ABORTED_REMOTE);
+    xil_printf("TCP connection aborted\n\r");
+}
+
+
+//鐢ㄤ簬鏈嶅姟鍣╮ecv鐨勫洖璋冨嚱鏁�
+static err_t tcp_recv_perf_traffic(void *arg, struct tcp_pcb *tpcb,
+        struct pbuf *p, err_t err)
+{
+    if (p == NULL) {
+        u64_t now = get_time_ms();
+        u64_t diff_ms = now - server.start_time;
+        tcp_server_close(tpcb);
+        tcp_conn_report(diff_ms, TCP_DONE_SERVER);
+        xil_printf("TCP test passed Successfully\n\r");
+        return ERR_OK;
+    }
+
+    //鎺ユ敹鏁版嵁杞崲涓哄瓧绗︿覆
+    if(p)
+    {
+    	memcpy(Tcp_Rec_Buf, p->payload, p->len);
+    	tcp_data_process();
+    }
+
+    server.total_bytes += p->tot_len;               //璁板綍鏈�缁堟姤鍛婄殑鎬诲瓧鑺傛暟
+
+    if (server.i_report.report_interval_time) {
+        u64_t now = get_time_ms();
+        server.i_report.total_bytes += p->tot_len;  //璁板綍涓存椂鎶ュ憡鐨勬�诲瓧鑺傛暟
+        if (server.i_report.start_time) {
+            u64_t diff_ms = now - server.i_report.start_time;
+            if (diff_ms >= server.i_report.report_interval_time) {
+                tcp_conn_report(diff_ms, INTER_REPORT);
+                //閲嶇疆涓存椂鎶ュ憡璁℃暟鍣�
+                server.i_report.start_time = 0;
+                server.i_report.total_bytes = 0;
+            }
+        } else {
+            server.i_report.start_time = now;   //淇濆瓨涓存椂鎶ュ憡鐨勫紑濮嬫椂闂�
+        }
+    }
+
+    tcp_recved(tpcb, p->tot_len);
+
+    pbuf_free(p);
+    return ERR_OK;
+}
+
+//鐢ㄤ簬鏈嶅姟鍣╝ccept鐨勫洖璋冨嚱鏁�
+static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
+{
+    if ((err != ERR_OK) || (newpcb == NULL)) {
+        return ERR_VAL;
+    }
+    c_pcb = newpcb;             //淇濆瓨杩炴帴鐨勫鎴风PCB
+
+    //淇濆瓨鏈�缁堟姤鍛婄殑寮�濮嬫椂闂�
+    server.start_time = get_time_ms();
+    server.end_time = 0;        //ms
+    //鏇存柊杩炴帴鐨勫鎴风ID
+    server.client_id++;
+    server.total_bytes = 0;
+
+    //鍒濆鍖栦复鏃舵姤鍛婂弬鏁�
+    server.i_report.report_interval_time = INTERIM_REPORT_INTERVAL * 1000;  //s
+    server.i_report.last_report_time = 0;
+    server.i_report.start_time = 0;
+    server.i_report.total_bytes = 0;
+
+    print_tcp_conn_stats();     //鎵撳嵃杩炴帴鐘舵�佷俊鎭�
+
+    //璁剧疆tcp rx杩炴帴鐨勫洖璋�
+    tcp_arg(c_pcb, NULL);
+    tcp_recv(c_pcb, tcp_recv_perf_traffic);
+    tcp_err(c_pcb, tcp_server_err);
+
+    return ERR_OK;
+}
+
+void start_application(void)
+{
+    err_t err;
+    struct tcp_pcb *pcb, *lpcb;
+
+    //鍒涘缓鏈嶅姟鍣≒CB
+    pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+    if (!pcb) {
+        xil_printf("TCP server: Error creating PCB. Out of Memory\r\n");
+        return;
+    }
+    //缁戝畾绔彛鍙�
+    err = tcp_bind(pcb, IP_ADDR_ANY, TCP_CONN_PORT);
+    if (err != ERR_OK) {
+        xil_printf("TCP server: Unable to bind to port %d: "
+                "err = %d\r\n" , TCP_CONN_PORT, err);
+        tcp_close(pcb);
+        return;
+    }
+
+    //灏嗚繛鎺ラ槦鍒楅檺鍒惰缃负1锛屼互渚夸竴娆′负涓�涓鎴风鎻愪緵鏈嶅姟
+    lpcb = tcp_listen_with_backlog(pcb, 1);
+    if (!lpcb) {
+        xil_printf("TCP server: Out of memory while tcp_listen\r\n");
+        tcp_close(pcb);
+        return;
+    }
+
+    tcp_arg(lpcb, NULL);                //姝ゅ涓嶉渶瑕佸洖璋冨嚱鏁扮殑浠讳綍鍙傛暟
+    tcp_accept(lpcb, tcp_server_accept);//鎸囧畾鐢ㄤ簬浼犲叆杩炴帴鐨勫洖璋�
+
+    return;
+}
+
+void tcp_data_process(void)
+{
+	if(Tcp_Rec_Buf[0] == '*')
+	{
+		if(Tcp_Rec_Buf[1] == 'I' && Tcp_Rec_Buf[2] == 'D' && Tcp_Rec_Buf[3] == 'N' && Tcp_Rec_Buf[4] == '?')
+		{
+			char *data="HALLIWAY,FREQ-COUNTER,C1804,1.00-1.00-01-1\n";
+			tcp_write(c_pcb, data, strlen(data), 0);
+		}
+		else if(Tcp_Rec_Buf[1] == 'R' && Tcp_Rec_Buf[2] == 'S' && Tcp_Rec_Buf[3] == 'T')
+		{
+			char data[]="1\n";
+			tcp_write(c_pcb, data, strlen(data), 1);
+		}
+		else if(Tcp_Rec_Buf[1] == 'O' && Tcp_Rec_Buf[2] == 'P' && Tcp_Rec_Buf[3] == 'C' && Tcp_Rec_Buf[4] == '?')
+		{
+			char data[]="1\n";
+			tcp_write(c_pcb, data, strlen(data), 1);
+		}
+	}
+	else if(Tcp_Rec_Buf[0] == 'R' && Tcp_Rec_Buf[1] == 'E' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'D' && Tcp_Rec_Buf[4] == '?')
+	{
+		char Freq[300];
+		ReadFr(Freq);
+		tcp_write(c_pcb,Freq,strlen(Freq), 1);
+	}
+	else if(Tcp_Rec_Buf[0] == 'M' && Tcp_Rec_Buf[1] == 'E' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'S' && Tcp_Rec_Buf[4] == ':'&& Tcp_Rec_Buf[5] == 'F'&& Tcp_Rec_Buf[6] == 'R'&& Tcp_Rec_Buf[7] == 'E'&& Tcp_Rec_Buf[8] == 'Q'&& Tcp_Rec_Buf[9] == '?')
+	{
+		char Freq[300];
+		ReadFr(Freq);
+		tcp_write(c_pcb,Freq,strlen(Freq), 1);
+	}
+	else if(Tcp_Rec_Buf[0] =='F' && Tcp_Rec_Buf[1] == 'R' && Tcp_Rec_Buf[2] == 'E' && Tcp_Rec_Buf[3] == 'Q' && Tcp_Rec_Buf[4] == ':')
+	{
+		if(Tcp_Rec_Buf[5] =='G' && Tcp_Rec_Buf[6] == 'A' && Tcp_Rec_Buf[7] == 'T' && Tcp_Rec_Buf[8] == 'E' && Tcp_Rec_Buf[9] == ':')
+		{
+			if(Tcp_Rec_Buf[10] =='T' && Tcp_Rec_Buf[11] == 'I' && Tcp_Rec_Buf[12] == 'M' && Tcp_Rec_Buf[13] == 'E' && Tcp_Rec_Buf[14] == ' ')
+			{
+				if(Tcp_Rec_Buf[15] =='0' && Tcp_Rec_Buf[16] == '.' && Tcp_Rec_Buf[17] == '0' && Tcp_Rec_Buf[18] == '0' && Tcp_Rec_Buf[19] == '1')
+				{
+					SetGate(1); //1ms
+					char data[]="1\n";
+					tcp_write(c_pcb, data, strlen(data), 1);
+				}
+				else if(Tcp_Rec_Buf[15] =='0' && Tcp_Rec_Buf[16] == '.' && Tcp_Rec_Buf[17] == '0' && Tcp_Rec_Buf[18] == '1')
+				{
+					SetGate(10); //10ms
+					char data[]="1\n";
+					tcp_write(c_pcb, data, strlen(data), 1);
+				}
+				else if(Tcp_Rec_Buf[15] =='0' && Tcp_Rec_Buf[16] == '.' && Tcp_Rec_Buf[17] == '1')
+				{
+					SetGate(100); //100ms
+					char data[]="1\n";
+					tcp_write(c_pcb, data, strlen(data), 1);
+				}
+				else if(Tcp_Rec_Buf[15] =='1' && Tcp_Rec_Buf[16] =='0')
+				{
+					SetGate(10000); //10000ms = 10s
+					char data[]="1\n";
+					tcp_write(c_pcb, data, strlen(data), 1);
+				}
+				else if(Tcp_Rec_Buf[15] =='1')
+				{
+					SetGate(1000); //1000ms = 1s
+					char data[]="1\n";
+					tcp_write(c_pcb, data, strlen(data), 1);
+				}
+			}
+		}
+	}
+	else if(Tcp_Rec_Buf[0] =='S' && Tcp_Rec_Buf[1] == 'I' && Tcp_Rec_Buf[2] == 'G' && Tcp_Rec_Buf[3] == ':')
+	{
+		if(Tcp_Rec_Buf[4] =='P' && Tcp_Rec_Buf[5] == 'R' && Tcp_Rec_Buf[6] == 'I' && Tcp_Rec_Buf[7] == 'R' && Tcp_Rec_Buf[8] == 'E' && Tcp_Rec_Buf[9] == 'F' && Tcp_Rec_Buf[10] == ' ')
+		{
+			if(Tcp_Rec_Buf[11] =='1')
+			{
+				Set_CTR_PRIREF(1);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+			else if(Tcp_Rec_Buf[11] =='0')
+			{
+				Set_CTR_PRIREF(0);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+		}
+		else if(Tcp_Rec_Buf[4] =='R' && Tcp_Rec_Buf[5] == 'E' && Tcp_Rec_Buf[6] == 'F' && Tcp_Rec_Buf[7] == 'C' && Tcp_Rec_Buf[8] == 'L' && Tcp_Rec_Buf[9] == 'O' && Tcp_Rec_Buf[10] == 'C'&& Tcp_Rec_Buf[11] == 'K'&& Tcp_Rec_Buf[12] == ' ')
+		{
+			if(Tcp_Rec_Buf[13] =='1')
+			{
+				Set_CTR_REF_CLOCK(1);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+			else if(Tcp_Rec_Buf[13] =='0')
+			{
+				Set_CTR_REF_CLOCK(0);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+		}
+		else if(Tcp_Rec_Buf[4] =='O' && Tcp_Rec_Buf[5] == 'C' && Tcp_Rec_Buf[6] == 'X' && Tcp_Rec_Buf[7] == 'O' && Tcp_Rec_Buf[8] == ' ')
+		{
+			if(Tcp_Rec_Buf[9] =='1')
+			{
+				Set_CTR_OCXO(1);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+			else if(Tcp_Rec_Buf[9] =='0')
+			{
+				Set_CTR_OCXO(0);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+		}
+		else if(Tcp_Rec_Buf[4] =='O' && Tcp_Rec_Buf[5] == 'C' && Tcp_Rec_Buf[6] == 'X' && Tcp_Rec_Buf[7] == 'O' && Tcp_Rec_Buf[8] == ' ')
+		{
+			if(Tcp_Rec_Buf[9] =='1')
+			{
+				Set_CTR_OCXO(1);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+			else if(Tcp_Rec_Buf[9] =='0')
+			{
+				Set_CTR_OCXO(0);
+				char data[]="1\n";
+				tcp_write(c_pcb, data, strlen(data), 1);
+			}
+		}
+	}
+}
