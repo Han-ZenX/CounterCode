@@ -1,11 +1,11 @@
 -- Copyright 1986-2018 Xilinx, Inc. All Rights Reserved.
 -- --------------------------------------------------------------------------------
 -- Tool Version: Vivado v.2018.3 (win64) Build 2405991 Thu Dec  6 23:38:27 MST 2018
--- Date        : Fri Aug  7 11:32:11 2026
+-- Date        : Thu Aug 13 16:20:03 2026
 -- Host        : DESKTOP-9L351U0 running 64-bit major release  (build 9200)
 -- Command     : write_vhdl -force -mode funcsim
---               d:/Vivado/counter/top_cymometer.srcs/sources_1/bd/ps/ip/ps_Counter_Sig_0_3/ps_Counter_Sig_0_3_sim_netlist.vhdl
--- Design      : ps_Counter_Sig_0_3
+--               d:/Vivado/CounterCode/top_cymometer.srcs/sources_1/bd/ps/ip/ps_Counter_Sig_0_0/ps_Counter_Sig_0_0_sim_netlist.vhdl
+-- Design      : ps_Counter_Sig_0_0
 -- Purpose     : This VHDL netlist is a functional simulation representation of the design and should not be modified or
 --               synthesized. This netlist cannot be used for SDF annotated simulation.
 -- Device      : xc7z020clg400-2
@@ -14,10 +14,10 @@ library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 library UNISIM;
 use UNISIM.VCOMPONENTS.ALL;
-entity ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI is
+entity ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI is
   port (
-    axi_wready_reg_0 : out STD_LOGIC;
     axi_awready_reg_0 : out STD_LOGIC;
+    axi_wready_reg_0 : out STD_LOGIC;
     axi_arready_reg_0 : out STD_LOGIC;
     s_axi_bvalid : out STD_LOGIC;
     aw_en_reg_0 : out STD_LOGIC;
@@ -43,10 +43,10 @@ entity ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI is
     s_axi_arvalid : in STD_LOGIC
   );
   attribute ORIG_REF_NAME : string;
-  attribute ORIG_REF_NAME of ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI : entity is "Counter_Sig_v1_0_S_AXI";
-end ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI;
+  attribute ORIG_REF_NAME of ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI : entity is "Counter_Sig_v1_0_S_AXI";
+end ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI;
 
-architecture STRUCTURE of ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI is
+architecture STRUCTURE of ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI is
   signal \^ctr_ocxo\ : STD_LOGIC;
   signal \^ctr_priref\ : STD_LOGIC;
   signal \^ctr_ref_clock\ : STD_LOGIC;
@@ -50980,14 +50980,14 @@ library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 library UNISIM;
 use UNISIM.VCOMPONENTS.ALL;
-entity ps_Counter_Sig_0_3_Counter_Sig_v1_0 is
+entity ps_Counter_Sig_0_0_Counter_Sig_v1_0 is
   port (
-    S_AXI_WREADY : out STD_LOGIC;
     S_AXI_AWREADY : out STD_LOGIC;
-    S_AXI_ARREADY : out STD_LOGIC;
+    S_AXI_WREADY : out STD_LOGIC;
     CTR_PRIREF : out STD_LOGIC;
     CTR_REF_CLOCK : out STD_LOGIC;
     CTR_OCXO : out STD_LOGIC;
+    S_AXI_ARREADY : out STD_LOGIC;
     s_axi_rdata : out STD_LOGIC_VECTOR ( 31 downto 0 );
     s_axi_rvalid : out STD_LOGIC;
     s_axi_bvalid : out STD_LOGIC;
@@ -51007,10 +51007,10 @@ entity ps_Counter_Sig_0_3_Counter_Sig_v1_0 is
     s_axi_rready : in STD_LOGIC
   );
   attribute ORIG_REF_NAME : string;
-  attribute ORIG_REF_NAME of ps_Counter_Sig_0_3_Counter_Sig_v1_0 : entity is "Counter_Sig_v1_0";
-end ps_Counter_Sig_0_3_Counter_Sig_v1_0;
+  attribute ORIG_REF_NAME of ps_Counter_Sig_0_0_Counter_Sig_v1_0 : entity is "Counter_Sig_v1_0";
+end ps_Counter_Sig_0_0_Counter_Sig_v1_0;
 
-architecture STRUCTURE of ps_Counter_Sig_0_3_Counter_Sig_v1_0 is
+architecture STRUCTURE of ps_Counter_Sig_0_0_Counter_Sig_v1_0 is
   signal Counter_Sig_v1_0_S_AXI_inst_n_4 : STD_LOGIC;
   signal \^s_axi_arready\ : STD_LOGIC;
   signal \^s_axi_awready\ : STD_LOGIC;
@@ -51027,7 +51027,7 @@ begin
   S_AXI_WREADY <= \^s_axi_wready\;
   s_axi_bvalid <= \^s_axi_bvalid\;
   s_axi_rvalid <= \^s_axi_rvalid\;
-Counter_Sig_v1_0_S_AXI_inst: entity work.ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI
+Counter_Sig_v1_0_S_AXI_inst: entity work.ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI
      port map (
       CTR_OCXO => CTR_OCXO,
       CTR_PRIREF => CTR_PRIREF,
@@ -51105,7 +51105,7 @@ library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 library UNISIM;
 use UNISIM.VCOMPONENTS.ALL;
-entity ps_Counter_Sig_0_3 is
+entity ps_Counter_Sig_0_0 is
   port (
     CTR_STATUS0 : in STD_LOGIC;
     CTR_STATUS1 : in STD_LOGIC;
@@ -51136,16 +51136,16 @@ entity ps_Counter_Sig_0_3 is
     s_axi_aresetn : in STD_LOGIC
   );
   attribute NotValidForBitStream : boolean;
-  attribute NotValidForBitStream of ps_Counter_Sig_0_3 : entity is true;
+  attribute NotValidForBitStream of ps_Counter_Sig_0_0 : entity is true;
   attribute CHECK_LICENSE_TYPE : string;
-  attribute CHECK_LICENSE_TYPE of ps_Counter_Sig_0_3 : entity is "ps_Counter_Sig_0_3,Counter_Sig_v1_0,{}";
+  attribute CHECK_LICENSE_TYPE of ps_Counter_Sig_0_0 : entity is "ps_Counter_Sig_0_0,Counter_Sig_v1_0,{}";
   attribute DowngradeIPIdentifiedWarnings : string;
-  attribute DowngradeIPIdentifiedWarnings of ps_Counter_Sig_0_3 : entity is "yes";
+  attribute DowngradeIPIdentifiedWarnings of ps_Counter_Sig_0_0 : entity is "yes";
   attribute X_CORE_INFO : string;
-  attribute X_CORE_INFO of ps_Counter_Sig_0_3 : entity is "Counter_Sig_v1_0,Vivado 2018.3";
-end ps_Counter_Sig_0_3;
+  attribute X_CORE_INFO of ps_Counter_Sig_0_0 : entity is "Counter_Sig_v1_0,Vivado 2018.3";
+end ps_Counter_Sig_0_0;
 
-architecture STRUCTURE of ps_Counter_Sig_0_3 is
+architecture STRUCTURE of ps_Counter_Sig_0_0 is
   signal \<const0>\ : STD_LOGIC;
   attribute X_INTERFACE_INFO : string;
   attribute X_INTERFACE_INFO of s_axi_aclk : signal is "xilinx.com:signal:clock:1.0 S_AXI_CLK CLK";
@@ -51182,7 +51182,7 @@ GND: unisim.vcomponents.GND
      port map (
       G => \<const0>\
     );
-inst: entity work.ps_Counter_Sig_0_3_Counter_Sig_v1_0
+inst: entity work.ps_Counter_Sig_0_0_Counter_Sig_v1_0
      port map (
       CTR_OCXO => CTR_OCXO,
       CTR_PRIREF => CTR_PRIREF,

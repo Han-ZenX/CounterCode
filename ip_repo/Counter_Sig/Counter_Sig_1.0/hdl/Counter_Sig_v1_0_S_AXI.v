@@ -15,13 +15,13 @@
 	)
 	(
 		// Users to add ports here
-        input              CTR_STATUS0,
-        input              CTR_STATUS1,
-        input              CTR_START_T,
+        input              CTR_STATUS0_SIG,
+        input              CTR_STATUS1_SIG,
+        input              CTR_START_T_SIG,
         
-        output             CTR_PRIREF,
-        output             CTR_REF_CLOCK,
-        output             CTR_OCXO,
+        output             CTR_PRIREF_SIG,
+        output             CTR_REF_CLOCK_SIG,
+        output             CTR_OCXO_SIG,
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -1239,26 +1239,9 @@
 
 	// Implement write response logic generation
 	// The write response and response valid signals are asserted by the slave
-	signal u_signal(
-    .CLK   (S_AXI_ACLK)  ,   // System clock, 100MHz
-    .RESETN (S_AXI_ARESETN) ,
-    
-    .CTR_PRIREF_SIG (slv_reg3[0]),
-    .CTR_REF_CLOCK_SIG (slv_reg4[0]),
-    .CTR_OCXO_SIG (slv_reg5[0]),
-    
-    .CTR_PRIREF (CTR_PRIREF),
-    .CTR_REF_CLOCK (CTR_REF_CLOCK),
-    .CTR_OCXO (CTR_OCXO),
-    
-    .CTR_STATUS0 (CTR_STATUS0),
-    .CTR_STATUS1 (CTR_STATUS1),
-    .CTR_START_T (CTR_START_T),
-    
-    .CTR_STATUS0_SIG (CTR_STATUS0_SIG),
-    .CTR_STATUS1_SIG (CTR_STATUS1_SIG),
-    .CTR_START_T_SIG (CTR_START_T_SIG)
-    ); 
+	assign CTR_PRIREF_SIG = slv_reg3[0];
+	assign CTR_REF_CLOCK_SIG = slv_reg4[0];
+	assign CTR_OCXO_SIG = slv_reg5[0];
 	// when axi_wready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted.  
 	// This marks the acceptance of address and indicates the status of 
 	// write transaction.

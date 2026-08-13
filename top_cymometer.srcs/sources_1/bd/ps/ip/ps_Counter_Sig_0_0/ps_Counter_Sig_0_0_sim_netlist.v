@@ -1,20 +1,20 @@
 // Copyright 1986-2018 Xilinx, Inc. All Rights Reserved.
 // --------------------------------------------------------------------------------
 // Tool Version: Vivado v.2018.3 (win64) Build 2405991 Thu Dec  6 23:38:27 MST 2018
-// Date        : Fri Aug  7 11:32:11 2026
+// Date        : Thu Aug 13 16:20:02 2026
 // Host        : DESKTOP-9L351U0 running 64-bit major release  (build 9200)
 // Command     : write_verilog -force -mode funcsim
-//               d:/Vivado/counter/top_cymometer.srcs/sources_1/bd/ps/ip/ps_Counter_Sig_0_3/ps_Counter_Sig_0_3_sim_netlist.v
-// Design      : ps_Counter_Sig_0_3
+//               d:/Vivado/CounterCode/top_cymometer.srcs/sources_1/bd/ps/ip/ps_Counter_Sig_0_0/ps_Counter_Sig_0_0_sim_netlist.v
+// Design      : ps_Counter_Sig_0_0
 // Purpose     : This verilog netlist is a functional simulation representation of the design and should not be modified
 //               or synthesized. This netlist cannot be used for SDF annotated simulation.
 // Device      : xc7z020clg400-2
 // --------------------------------------------------------------------------------
 `timescale 1 ps / 1 ps
 
-(* CHECK_LICENSE_TYPE = "ps_Counter_Sig_0_3,Counter_Sig_v1_0,{}" *) (* DowngradeIPIdentifiedWarnings = "yes" *) (* X_CORE_INFO = "Counter_Sig_v1_0,Vivado 2018.3" *) 
+(* CHECK_LICENSE_TYPE = "ps_Counter_Sig_0_0,Counter_Sig_v1_0,{}" *) (* DowngradeIPIdentifiedWarnings = "yes" *) (* X_CORE_INFO = "Counter_Sig_v1_0,Vivado 2018.3" *) 
 (* NotValidForBitStream *)
-module ps_Counter_Sig_0_3
+module ps_Counter_Sig_0_0
    (CTR_STATUS0,
     CTR_STATUS1,
     CTR_START_T,
@@ -101,7 +101,7 @@ module ps_Counter_Sig_0_3
   assign s_axi_rresp[0] = \<const0> ;
   GND GND
        (.G(\<const0> ));
-  ps_Counter_Sig_0_3_Counter_Sig_v1_0 inst
+  ps_Counter_Sig_0_0_Counter_Sig_v1_0 inst
        (.CTR_OCXO(CTR_OCXO),
         .CTR_PRIREF(CTR_PRIREF),
         .CTR_REF_CLOCK(CTR_REF_CLOCK),
@@ -128,13 +128,13 @@ module ps_Counter_Sig_0_3
 endmodule
 
 (* ORIG_REF_NAME = "Counter_Sig_v1_0" *) 
-module ps_Counter_Sig_0_3_Counter_Sig_v1_0
-   (S_AXI_WREADY,
-    S_AXI_AWREADY,
-    S_AXI_ARREADY,
+module ps_Counter_Sig_0_0_Counter_Sig_v1_0
+   (S_AXI_AWREADY,
+    S_AXI_WREADY,
     CTR_PRIREF,
     CTR_REF_CLOCK,
     CTR_OCXO,
+    S_AXI_ARREADY,
     s_axi_rdata,
     s_axi_rvalid,
     s_axi_bvalid,
@@ -152,12 +152,12 @@ module ps_Counter_Sig_0_3_Counter_Sig_v1_0
     s_axi_aresetn,
     s_axi_bready,
     s_axi_rready);
-  output S_AXI_WREADY;
   output S_AXI_AWREADY;
-  output S_AXI_ARREADY;
+  output S_AXI_WREADY;
   output CTR_PRIREF;
   output CTR_REF_CLOCK;
   output CTR_OCXO;
+  output S_AXI_ARREADY;
   output [31:0]s_axi_rdata;
   output s_axi_rvalid;
   output s_axi_bvalid;
@@ -205,7 +205,7 @@ module ps_Counter_Sig_0_3_Counter_Sig_v1_0
   wire [3:0]s_axi_wstrb;
   wire s_axi_wvalid;
 
-  ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI Counter_Sig_v1_0_S_AXI_inst
+  ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI Counter_Sig_v1_0_S_AXI_inst
        (.CTR_OCXO(CTR_OCXO),
         .CTR_PRIREF(CTR_PRIREF),
         .CTR_REF_CLOCK(CTR_REF_CLOCK),
@@ -267,9 +267,9 @@ module ps_Counter_Sig_0_3_Counter_Sig_v1_0
 endmodule
 
 (* ORIG_REF_NAME = "Counter_Sig_v1_0_S_AXI" *) 
-module ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI
-   (axi_wready_reg_0,
-    axi_awready_reg_0,
+module ps_Counter_Sig_0_0_Counter_Sig_v1_0_S_AXI
+   (axi_awready_reg_0,
+    axi_wready_reg_0,
     axi_arready_reg_0,
     s_axi_bvalid,
     aw_en_reg_0,
@@ -293,8 +293,8 @@ module ps_Counter_Sig_0_3_Counter_Sig_v1_0_S_AXI
     s_axi_awvalid,
     s_axi_wstrb,
     s_axi_arvalid);
-  output axi_wready_reg_0;
   output axi_awready_reg_0;
+  output axi_wready_reg_0;
   output axi_arready_reg_0;
   output s_axi_bvalid;
   output aw_en_reg_0;

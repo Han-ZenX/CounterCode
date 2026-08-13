@@ -589,9 +589,9 @@ proc create_root_design { parentCell } {
   connect_bd_intf_net -intf_net ps7_0_axi_periph_M02_AXI [get_bd_intf_pins axi_dma_0/S_AXI_LITE] [get_bd_intf_pins ps7_0_axi_periph/M02_AXI]
 
   # Create port connections
-  connect_bd_net -net CTR_START_T_1 [get_bd_ports CTR_START_T] [get_bd_pins Counter_Sig_0/CTR_START_T]
-  connect_bd_net -net CTR_STATUS0_1 [get_bd_ports CTR_STATUS0] [get_bd_pins Counter_Sig_0/CTR_STATUS0]
-  connect_bd_net -net CTR_STATUS1_1 [get_bd_ports CTR_STATUS1] [get_bd_pins Counter_Sig_0/CTR_STATUS1]
+  connect_bd_net -net CTR_START_T_0_1 [get_bd_ports CTR_START_T] [get_bd_pins Counter_Sig_0/CTR_START_T]
+  connect_bd_net -net CTR_STATUS0_0_1 [get_bd_ports CTR_STATUS0] [get_bd_pins Counter_Sig_0/CTR_STATUS0]
+  connect_bd_net -net CTR_STATUS1_0_1 [get_bd_ports CTR_STATUS1] [get_bd_pins Counter_Sig_0/CTR_STATUS1]
   connect_bd_net -net Counter_Sig_0_CTR_OCXO [get_bd_ports CTR_OCXO] [get_bd_pins Counter_Sig_0/CTR_OCXO]
   connect_bd_net -net Counter_Sig_0_CTR_PRIREF [get_bd_ports CTR_PRIREF] [get_bd_pins Counter_Sig_0/CTR_PRIREF]
   connect_bd_net -net Counter_Sig_0_CTR_REF_CLOCK [get_bd_ports CTR_REF_CLOCK] [get_bd_pins Counter_Sig_0/CTR_REF_CLOCK]

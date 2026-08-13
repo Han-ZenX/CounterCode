@@ -49,6 +49,15 @@
 		output wire  s_axi_rvalid,
 		input wire  s_axi_rready
 	);
+	
+	wire CTR_STATUS0_SIG;
+	wire CTR_STATUS1_SIG;
+	wire CTR_START_T_SIG;
+
+	wire CTR_PRIREF_SIG;
+	wire CTR_REF_CLOCK_SIG;
+	wire CTR_OCXO_SIG;
+	
 // Instantiation of Axi Bus Interface S_AXI
 	Counter_Sig_v1_0_S_AXI # ( 
 		.C_S_AXI_DATA_WIDTH(C_S_AXI_DATA_WIDTH),
@@ -76,17 +85,37 @@
 		.S_AXI_RVALID(s_axi_rvalid),
 		.S_AXI_RREADY(s_axi_rready),
 		
-		.CTR_STATUS0  (CTR_STATUS0),
-        .CTR_STATUS1  (CTR_STATUS1),
-        .CTR_START_T  (CTR_START_T),
+		.CTR_STATUS0_SIG  (CTR_STATUS0_SIG),
+        .CTR_STATUS1_SIG  (CTR_STATUS1_SIG),
+        .CTR_START_T_SIG  (CTR_START_T_SIG),
         
-        .CTR_PRIREF   (CTR_PRIREF),
-        .CTR_REF_CLOCK(CTR_REF_CLOCK),
-        .CTR_OCXO     (CTR_OCXO)
+        .CTR_PRIREF_SIG   (CTR_PRIREF_SIG),
+        .CTR_REF_CLOCK_SIG(CTR_REF_CLOCK_SIG),
+        .CTR_OCXO_SIG     (CTR_OCXO_SIG)
 	);
 
 	// Add user logic here
 
+	signal u_signal(
+    .CLK   (s_axi_aclk)  ,   // System clock, 100MHz
+    .RESETN (s_axi_aresetn) ,
+    
+    .CTR_STATUS0 (CTR_STATUS0),
+    .CTR_STATUS1 (CTR_STATUS1),
+    .CTR_START_T (CTR_START_T),
+    
+    .CTR_STATUS0_SIG (CTR_STATUS0_SIG),
+    .CTR_STATUS1_SIG (CTR_STATUS1_SIG),
+    .CTR_START_T_SIG (CTR_START_T_SIG),
+	
+	.CTR_PRIREF_SIG (CTR_PRIREF_SIG),
+    .CTR_REF_CLOCK_SIG (CTR_REF_CLOCK_SIG),
+    .CTR_OCXO_SIG (CTR_OCXO_SIG),
+	
+	.CTR_PRIREF (CTR_PRIREF),
+    .CTR_REF_CLOCK (CTR_REF_CLOCK),
+    .CTR_OCXO (CTR_OCXO)
+    ); 
 	// User logic ends
 
 	endmodule

@@ -48,13 +48,13 @@
 
 
 // IP VLNV: xilinx.com:user:Counter_Sig:1.0
-// IP Revision: 3
+// IP Revision: 4
 
 (* X_CORE_INFO = "Counter_Sig_v1_0,Vivado 2018.3" *)
-(* CHECK_LICENSE_TYPE = "ps_Counter_Sig_0_3,Counter_Sig_v1_0,{}" *)
-(* CORE_GENERATION_INFO = "ps_Counter_Sig_0_3,Counter_Sig_v1_0,{x_ipProduct=Vivado 2018.3,x_ipVendor=xilinx.com,x_ipLibrary=user,x_ipName=Counter_Sig,x_ipVersion=1.0,x_ipCoreRevision=3,x_ipLanguage=VERILOG,x_ipSimLanguage=MIXED,C_S_AXI_DATA_WIDTH=32,C_S_AXI_ADDR_WIDTH=9}" *)
+(* CHECK_LICENSE_TYPE = "ps_Counter_Sig_0_0,Counter_Sig_v1_0,{}" *)
+(* CORE_GENERATION_INFO = "ps_Counter_Sig_0_0,Counter_Sig_v1_0,{x_ipProduct=Vivado 2018.3,x_ipVendor=xilinx.com,x_ipLibrary=user,x_ipName=Counter_Sig,x_ipVersion=1.0,x_ipCoreRevision=4,x_ipLanguage=VERILOG,x_ipSimLanguage=MIXED,C_S_AXI_DATA_WIDTH=32,C_S_AXI_ADDR_WIDTH=9}" *)
 (* DowngradeIPIdentifiedWarnings = "yes" *)
-module ps_Counter_Sig_0_3 (
+module ps_Counter_Sig_0_0 (
   CTR_STATUS0,
   CTR_STATUS1,
   CTR_START_T,

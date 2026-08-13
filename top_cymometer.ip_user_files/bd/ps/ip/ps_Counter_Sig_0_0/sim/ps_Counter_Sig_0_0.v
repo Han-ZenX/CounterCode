@@ -48,12 +48,12 @@
 
 
 // IP VLNV: xilinx.com:user:Counter_Sig:1.0
-// IP Revision: 3
+// IP Revision: 4
 
 `timescale 1ns/1ps
 
 (* DowngradeIPIdentifiedWarnings = "yes" *)
-module ps_Counter_Sig_0_3 (
+module ps_Counter_Sig_0_0 (
   CTR_STATUS0,
   CTR_STATUS1,
   CTR_START_T,
