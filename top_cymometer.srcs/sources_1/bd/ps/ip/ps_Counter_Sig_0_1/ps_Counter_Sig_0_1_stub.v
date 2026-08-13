@@ -1,11 +1,11 @@
 // Copyright 1986-2018 Xilinx, Inc. All Rights Reserved.
 // --------------------------------------------------------------------------------
 // Tool Version: Vivado v.2018.3 (win64) Build 2405991 Thu Dec  6 23:38:27 MST 2018
-// Date        : Thu Aug 13 16:20:02 2026
+// Date        : Thu Aug 13 17:06:00 2026
 // Host        : DESKTOP-9L351U0 running 64-bit major release  (build 9200)
 // Command     : write_verilog -force -mode synth_stub
-//               d:/Vivado/CounterCode/top_cymometer.srcs/sources_1/bd/ps/ip/ps_Counter_Sig_0_0/ps_Counter_Sig_0_0_stub.v
-// Design      : ps_Counter_Sig_0_0
+//               d:/Vivado/CounterCode/top_cymometer.srcs/sources_1/bd/ps/ip/ps_Counter_Sig_0_1/ps_Counter_Sig_0_1_stub.v
+// Design      : ps_Counter_Sig_0_1
 // Purpose     : Stub declaration of top-level module interface
 // Device      : xc7z020clg400-2
 // --------------------------------------------------------------------------------
@@ -14,7 +14,7 @@
 // The synthesis directives are for Synopsys Synplify support to prevent IO buffer insertion.
 // Please paste the declaration into a Verilog source file or add the file as an additional source.
 (* X_CORE_INFO = "Counter_Sig_v1_0,Vivado 2018.3" *)
-module ps_Counter_Sig_0_0(CTR_STATUS0, CTR_STATUS1, CTR_START_T, 
+module ps_Counter_Sig_0_1(CTR_STATUS0, CTR_STATUS1, CTR_START_T, 
   CTR_PRIREF, CTR_REF_CLOCK, CTR_OCXO, s_axi_awaddr, s_axi_awprot, s_axi_awvalid, 
   s_axi_awready, s_axi_wdata, s_axi_wstrb, s_axi_wvalid, s_axi_wready, s_axi_bresp, 
   s_axi_bvalid, s_axi_bready, s_axi_araddr, s_axi_arprot, s_axi_arvalid, s_axi_arready, 

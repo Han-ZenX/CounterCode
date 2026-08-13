@@ -1342,9 +1342,9 @@
 	begin
 	      // Address decoding for reading registers
 	      case ( axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] )
-	        7'h00   : reg_data_out <= CTR_STATUS0_SIG;
-	        7'h01   : reg_data_out <= CTR_STATUS1_SIG;
-	        7'h02   : reg_data_out <= CTR_START_T_SIG;
+	        7'h00   : reg_data_out <= {{31{1'b0}},CTR_STATUS0_SIG}; //The first 31 zeros are concatenated, 
+	        7'h01   : reg_data_out <= {{31{1'b0}},CTR_STATUS1_SIG}; //making a total of 32 bits
+	        7'h02   : reg_data_out <= {{31{1'b0}},CTR_START_T_SIG};
 	        7'h03   : reg_data_out <= slv_reg3;
 	        7'h04   : reg_data_out <= slv_reg4;
 	        7'h05   : reg_data_out <= slv_reg5;
