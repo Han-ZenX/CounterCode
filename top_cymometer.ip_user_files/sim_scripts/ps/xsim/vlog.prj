@@ -1,4 +1,4 @@
-verilog xil_defaultlib --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/ec67/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/70cf/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ip/ps_processing_system7_0_0" \
+verilog xil_defaultlib --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/ec67/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/70cf/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ip/ps_processing_system7_0_0" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/8713/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/979d/hdl/verilog" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/b2d0/hdl/verilog" \
 "../../../bd/ps/ip/ps_processing_system7_0_0/sim/ps_processing_system7_0_0.v" \
 "../../../bd/ps/sim/ps.v" \
 "../../../bd/ps/ip/ps_xbar_0/sim/ps_xbar_0.v" \
@@ -6,13 +6,31 @@ verilog xil_defaultlib --include "../../../../top_cymometer.srcs/sources_1/bd/ps
 "../../../bd/ps/ipshared/f233/hdl/signal.v" \
 "../../../bd/ps/ipshared/f233/hdl/Counter_Sig_v1_0.v" \
 "../../../bd/ps/ip/ps_Counter_Sig_0_3/sim/ps_Counter_Sig_0_3.v" \
-"../../../bd/ps/ipshared/9558/src/cymometer.v" \
-"../../../bd/ps/ipshared/9558/src/tdc.v" \
-"../../../bd/ps/ipshared/9558/src/timestamp_engine.v" \
-"../../../bd/ps/ipshared/9558/src/top_cymometer.v" \
-"../../../bd/ps/ipshared/9558/hdl/top_cymometer_ip_v1_6_S0_AXI.v" \
-"../../../bd/ps/ipshared/9558/hdl/top_cymometer_ip_v1_6.v" \
-"../../../bd/ps/ip/ps_top_cymometer_ip_0_1/sim/ps_top_cymometer_ip_0_1.v" \
+"../../../bd/ps/ip/ps_axis_data_fifo_0_0/sim/ps_axis_data_fifo_0_0.v" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/sim/bd_af51.v" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_0/sim/bd_af51_one_0.v" \
+
+sv xil_defaultlib --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/ec67/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/70cf/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ip/ps_processing_system7_0_0" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/8713/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/979d/hdl/verilog" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/b2d0/hdl/verilog" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_2/sim/bd_af51_s00mmu_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_3/sim/bd_af51_s00tr_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_4/sim/bd_af51_s00sic_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_5/sim/bd_af51_s00a2s_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_6/sim/bd_af51_sawn_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_7/sim/bd_af51_swn_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_8/sim/bd_af51_sbn_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_9/sim/bd_af51_m00s2a_0.sv" \
+"../../../bd/ps/ip/ps_axi_smc_0/bd_0/ip/ip_10/sim/bd_af51_m00e_0.sv" \
+
+verilog xil_defaultlib --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/ec67/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/70cf/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ip/ps_processing_system7_0_0" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/8713/hdl" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/979d/hdl/verilog" --include "../../../../top_cymometer.srcs/sources_1/bd/ps/ipshared/b2d0/hdl/verilog" \
+"../../../bd/ps/ip/ps_axi_smc_0/sim/ps_axi_smc_0.v" \
+"../../../bd/ps/ipshared/58f7/hdl/Counter_v1_0_M_AXIS.v" \
+"../../../bd/ps/ipshared/58f7/hdl/Counter_v1_0_S_AXI.v" \
+"../../../bd/ps/ipshared/58f7/src/cymometer.v" \
+"../../../bd/ps/ipshared/58f7/src/tdc.v" \
+"../../../bd/ps/ipshared/58f7/src/timestamp_engine.v" \
+"../../../bd/ps/ipshared/58f7/src/top_cymometer.v" \
+"../../../bd/ps/ipshared/58f7/hdl/Counter_v1_0.v" \
+"../../../bd/ps/ip/ps_Counter_0_1/sim/ps_Counter_0_1.v" \
 "../../../bd/ps/ip/ps_auto_pc_0/sim/ps_auto_pc_0.v" \
 
 verilog xil_defaultlib "glbl.v"

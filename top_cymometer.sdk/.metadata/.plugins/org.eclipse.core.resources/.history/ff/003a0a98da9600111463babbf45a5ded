@@ -1,0 +1,551 @@
+/*
+ * freq_counter.c
+ *
+ *  Created on: 2025骞�4鏈�11鏃�
+ *      Author: hanzheng
+ */
+#include "freq_counter.h"
+
+int FREF; //鍙傝�冮鐜�
+
+double START_T_TIME;  //鍗曚綅ms
+
+int START_T_END;
+
+int PPM;  //ppm
+
+double GATE_TIME = 0; //ms
+
+double START_GATE_TIME = 0; //ms
+
+u32 g_clk_fs_freq = CLK_FS_FREQ; // SD卡加载的基准时钟频率
+u32 g_clk_fs_freq_sd = CLK_FS_FREQ; // SD卡频率缓存
+
+//============================================================================
+// SD Card Clock Frequency Management
+//============================================================================
+
+u32 LoadClkFsFreq(void)
+{
+	FATFS fs;
+	FIL file;
+	FRESULT res;
+	char buf[32];
+	UINT br;
+
+	res = f_mount(&fs, "0:", 1);
+	if (res != FR_OK) {
+		xil_printf("[CLK] f_mount failed: %d, using default %d Hz\r\n", res, CLK_FS_FREQ);
+		g_clk_fs_freq_sd = CLK_FS_FREQ;
+		return g_clk_fs_freq_sd;
+	}
+
+	res = f_open(&file, CLK_FS_FREQ_FILE, FA_READ | FA_OPEN_EXISTING);
+	if (res != FR_OK) {
+		xil_printf("[CLK] %s not found (err=%d), using default %d Hz\r\n", CLK_FS_FREQ_FILE, res, CLK_FS_FREQ);
+		g_clk_fs_freq_sd = CLK_FS_FREQ;
+		f_mount(NULL, "0:", 0);
+		return g_clk_fs_freq_sd;
+	}
+
+	memset(buf, 0, sizeof(buf));
+	res = f_read(&file, buf, sizeof(buf) - 1, &br);
+	f_close(&file);
+	f_mount(NULL, "0:", 0);
+
+	if (res == FR_OK && br > 0) {
+		unsigned long val = strtoul(buf, NULL, 10);
+		if (val > 0) {
+			g_clk_fs_freq_sd = (u32)val;
+			xil_printf("[CLK] Loaded from SD: %d Hz\r\n", g_clk_fs_freq_sd);
+			return g_clk_fs_freq_sd;
+		}
+	}
+
+	xil_printf("[CLK] Parse failed, using default %d Hz\r\n", CLK_FS_FREQ);
+	g_clk_fs_freq_sd = CLK_FS_FREQ;
+	return g_clk_fs_freq_sd;
+}
+
+int SaveClkFsFreq(u32 freq)
+{
+	FATFS fs;
+	FIL file;
+	FRESULT res;
+	char buf[32];
+	UINT bw;
+
+	res = f_mount(&fs, "0:", 1);
+	if (res != FR_OK) return -1;
+
+	res = f_open(&file, CLK_FS_FREQ_FILE, FA_WRITE | FA_CREATE_ALWAYS);
+	if (res != FR_OK) {
+		f_mount(NULL, "0:", 0);
+		return -1;
+	}
+
+	int len = sprintf(buf, "%lu", (unsigned long)freq);
+	res = f_write(&file, buf, (UINT)len, &bw);
+	f_close(&file);
+	f_mount(NULL, "0:", 0);
+
+	return (res == FR_OK) ? 0 : -1;
+}
+
+u32 GetClkFsFreq(void)
+{
+	// STATUS0=1: 使用SD卡校准频率, STATUS0=0: 使用理想312.5MHz
+	if (ReadSTATUS0() == 1)
+		return g_clk_fs_freq_sd;
+	else
+		return CLK_FS_FREQ;
+}
+
+int init_freqcounter(void)
+{
+	// Load clock frequency from SD card first
+	LoadClkFsFreq();
+	u32 clkfsfreq = GetClkFsFreq();
+
+	FREF = 1000000; //1MHZ
+
+	PPM = 0;  //ppm
+
+	START_T_TIME = 0;
+
+	START_T_END = 0;
+
+	START_GATE_TIME = 0.1; //0.1ms = 100us
+
+	int gate = 100; //100ms
+
+	SetClkFsFreq(clkfsfreq);
+
+	SetGate(gate);
+
+	Set_CTR_PRIREF(1);
+
+	Set_CTR_REF_CLOCK(1);
+
+	Set_CTR_OCXO(1);
+
+	SetRESET(1);
+
+	usleep(10); //寤舵椂10us
+
+	SetRESET(0);
+
+	SetGATE(0);
+
+	return 0;
+}
+
+int SetCntGateMax(u32 cntgatemax)
+{
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG5,cntgatemax);
+	return 0;
+}
+
+int SetCntGateLow(u32 cntgatelow)
+{
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG6,cntgatelow);
+	return 0;
+}
+
+int SetClkFsFreq(u32 clkfsfreq)
+{
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG7,clkfsfreq);
+	return 0;
+}
+
+int SetGate(double msec)
+{
+	GATE_TIME = msec;
+
+	u32 clk_fs = GetClkFsFreq();
+
+	// Dynamic gate calculation based on actual clock frequency
+	// cntgatemax = F * T_sec - 1 = F * msec / 1000 - 1
+	u64 cntgatemax64 = (u64)clk_fs * (u64)msec / 1000ULL - 1ULL;
+	u32 cntgatemax = (u32)cntgatemax64;
+
+	// cntgatelow = F / 20 (5% threshold for gate timeout)
+	u32 cntgatelow = (u32)((u64)clk_fs / 20ULL);
+
+	SetCntGateMax(cntgatemax);
+	SetCntGateLow(cntgatelow);
+
+	return 0;
+}
+
+int Set_CTR_PRIREF(u32 CTR_PRIREF)
+{
+	COUNTER_SIG_mWriteReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG3,CTR_PRIREF);
+	return 0;
+}
+
+int Set_CTR_REF_CLOCK(u32 CTR_REF_CLOCK)
+{
+	COUNTER_SIG_mWriteReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG4,CTR_REF_CLOCK);
+	return 0;
+}
+
+int Set_CTR_OCXO(u32 CTR_OCXO)
+{
+	COUNTER_SIG_mWriteReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG5,CTR_OCXO);
+	return 0;
+}
+
+u32 ReadSTATUS0(void)
+{
+	u32 STATUS0;
+	STATUS0 = COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG0);
+	return STATUS0;
+}
+
+u32 ReadSTATUS1(void)
+{
+	u32 STATUS1;
+	STATUS1 = COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG1);
+	return STATUS1;
+}
+
+int SetRESET(u32 RESET)
+{
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG13,RESET);
+    return 0;
+}
+
+int SetGATE(u32 GATE)
+{
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG14,GATE);
+	return 0;
+}
+
+int ReadFr(char * Freq)
+{
+	u32 nyquist_limit = GetClkFsFreq() / 2; // 156.25 MHz
+	u32 safe_limit = nyquist_limit * 0.9;
+	if (FREF > safe_limit)
+	{
+		return ReadFr_TDC(Freq);//等精度法，无奈奎斯特限制
+	}
+	else
+	{
+		return ReadFr_TimestampMode(Freq); //时间戳法，高精度
+	}
+}
+
+double ReadStartT(char * Freq)
+{
+	u32 cnt_gate_time;
+
+	double db_gate_time;
+
+	int n_gate_time;
+
+	double db_sleep_time;
+
+	unsigned long sleep_time;
+
+	db_gate_time = (((double)FREF * (START_GATE_TIME/1000))-10);
+
+	db_sleep_time = START_GATE_TIME * 1000;
+
+	sleep_time = (unsigned long)db_sleep_time;
+
+	n_gate_time = (int)db_gate_time;
+
+	cnt_gate_time = (u32)n_gate_time;
+
+	SetCntGateMax(cnt_gate_time);
+
+	u32 cnt_clk_stand_reg_1;
+
+	u32 cnt_clk_test_reg_1;
+
+	double Fr = 0;
+
+	SetRESET(1);
+
+	usleep(10); //寤舵椂10us
+
+	SetRESET(0);
+
+	SetGATE(1);
+
+	usleep(sleep_time); //寤舵椂100000us = 100ms
+
+	SetGATE(0);
+
+	usleep(10); //寤舵椂10us
+
+	cnt_clk_stand_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG16);
+	cnt_clk_test_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG17);
+	Fr = ((double)GetClkFsFreq() * (double)cnt_clk_test_reg_1 / (double)cnt_clk_stand_reg_1);
+
+	sprintf(Freq,"%.5f\n",Fr);
+
+	return Fr;
+}
+
+void InitStartT(void *p)
+{
+	u32 START_T = 0;
+
+	START_T_TIME = 0;
+
+	START_T_END = 0;
+
+	double Freq;
+	double Fref;
+
+	double StartT = 0;
+
+	double FRppm;
+
+	while(1)
+	{
+		START_T = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG18);
+		if(START_T==1)
+		{
+			for(int i=0;i<1000;i++)
+			{
+				char Fr[300];
+				Freq = ReadStartT(Fr);
+				Freq = Freq * 4;
+				Fref = (double)FREF * 4;
+
+				FRppm = (Freq - Fref)/Fref * 1000000;
+
+				StartT = (START_GATE_TIME + 0.02 )* (i+1);
+
+				if(FRppm >= (-1 * (double)PPM) && FRppm <= (double)PPM)
+				{
+					START_T_TIME = StartT;
+					START_T_END = 1;
+					return;
+				}
+			}
+
+			START_T_TIME = StartT;
+			START_T_END = 1;
+			break;
+		}
+	}
+
+	START_T_END = 1;
+	return;
+}
+
+//============================================================================
+// TDC reading functions - sub-cycle time measurements
+//============================================================================
+
+u32 ReadTdcRefRise(void)
+{
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG19);
+}
+
+u32 ReadTdcRefFall(void)
+{
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG20);
+}
+
+u32 ReadTdcTestRise(void)
+{
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG21);
+}
+
+u32 ReadTdcTestFall(void)
+{
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG22);
+}
+
+//============================================================================
+// ReadFr_TDC - ReadFr with TDC sub-cycle correction
+//
+// TDC correction formula (绛夌簿搴︽祴棰戞硶):
+//   eff_stand = cnt_stand + tdc_ref_rise/64 - tdc_ref_fall/64
+//   eff_test  = cnt_test  + tdc_test_rise/64 - tdc_test_fall/64
+//   Fr = (eff_test / eff_stand) * CLK_FS_FREQ
+//
+// This eliminates the 卤1 counter quantization error on both sides,
+// improving resolution from ~1ppm to <0.001ppm (100ms gate).
+//============================================================================
+int ReadFr_TDC(char * Freq)
+{
+	double db_sleep_time;
+	unsigned long sleep_time;
+
+	db_sleep_time = GATE_TIME * 1000;
+	sleep_time = (unsigned long)db_sleep_time;
+
+	u32 cnt_clk_stand_reg_1;
+	u32 cnt_clk_test_reg_1;
+
+	double Fr;
+
+	SetRESET(1);
+	usleep(10);
+	SetRESET(0);
+
+	SetGATE(1);
+	usleep(sleep_time);
+	SetGATE(0);
+	usleep(10);
+
+	// 绛夌簿搴︽祴棰戞硶 + TDC鏍℃
+	cnt_clk_stand_reg_1 = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG16);
+	cnt_clk_test_reg_1 = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG17);
+
+	// Read TDC values
+	u32 tdc_rise_ref = ReadTdcRefRise();
+	u32 tdc_fall_ref = ReadTdcRefFall();
+	u32 tdc_rise_test = ReadTdcTestRise();
+	u32 tdc_fall_test = ReadTdcTestFall();
+
+	// TDC鏍℃: 鏈夋晥璁℃暟 = 鏁存暟璁℃暟 + 璧峰灏忔暟 - 缁撴潫灏忔暟
+	double eff_stand = (double)cnt_clk_stand_reg_1
+		+ (double)tdc_rise_ref / (double)TDC_NUM_TAPS
+		- (double)tdc_fall_ref / (double)TDC_NUM_TAPS;
+
+	double eff_test = (double)cnt_clk_test_reg_1
+		+ (double)tdc_rise_test / (double)TDC_NUM_TAPS
+		- (double)tdc_fall_test / (double)TDC_NUM_TAPS;
+
+	// 纭繚鏈夋晥璁℃暟涓烘鏁�
+	if (eff_stand > 0 && eff_test > 0)
+		Fr = ((double)GetClkFsFreq() * eff_test / eff_stand);
+	else
+		Fr = ((double)GetClkFsFreq() * (double)cnt_clk_test_reg_1 / (double)cnt_clk_stand_reg_1);
+
+	sprintf(Freq, "%.5f\n", Fr);
+
+	return 0;
+}
+
+//============================================================================
+// Timestamp Engine - Continuous Dead-Time-Free Measurement
+//============================================================================
+
+int ReadTimestamps(double *timestamps, int max_count, int edge_skip)
+{
+	u32 status, fifo_entries;
+
+	// Step 1: Reset timestamp engine (ts_reset=1, ts_enable=0)
+	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG23, 0x2);
+	// Reset FIFO read pointer to match write pointer (both at 0)
+	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG26, 0);
+	usleep(100);
+
+	// Step 2: Set edge_skip
+	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG24, (u32)edge_skip);
+
+	// Step 3: Enable timestamp engine (ts_enable=1, ts_reset=0)
+	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG23, 0x1);
+	usleep(100); // CDC sync delay
+
+	// Step 4: Wait for measurement (use configured gate time)
+	double sleep_time_us = GATE_TIME * 1000.0;
+	if (sleep_time_us < 1000.0) // minimum 1ms for stability
+		sleep_time_us = 1000.0;
+	usleep((unsigned long)sleep_time_us);
+
+	// Step 5: Disable engine (FIFO contents preserved)
+	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG23, 0x0);
+	usleep(100);
+
+	// Step 6: Read FIFO status - bits [10:0] = entry count
+	status = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG25);
+	fifo_entries = status & 0x7FF;
+
+	if (fifo_entries > (u32)max_count)
+		fifo_entries = (u32)max_count;
+
+	// Step 7: Read FIFO entries sequentially
+	for (u32 i = 0; i < fifo_entries; i++) {
+		TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG26, i);
+		u32 cnt_val = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG27);
+		u32 tdc_val = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG28) & 0x3F;
+		timestamps[i] = ((double)cnt_val + (double)tdc_val / 64.0) / (double)GetClkFsFreq();
+	}
+
+	return (int)fifo_entries;
+}
+
+double ComputeFreqFromTimestamps(double *timestamps, int count)
+{
+	if (count < 3)
+		return 0.0;
+
+	// Unwrap timestamps to handle potential 32-bit counter wrap-around
+	double period = (double)0x100000000ULL / (double)GetClkFsFreq(); // ~13.7s
+	for (int i = 1; i < count; i++) {
+		if (timestamps[i] < timestamps[i-1]) {
+			timestamps[i] += period;
+		}
+	}
+
+	// Linear regression: t[i] = a + b*i
+	// slope b = (N*sum(i*t) - sum(i)*sum(t)) / (N*sum(i^2) - (sum(i))^2)
+	double sum_i = 0.0, sum_t = 0.0, sum_it = 0.0, sum_i2 = 0.0;
+	for (int i = 0; i < count; i++) {
+		sum_i  += (double)i;
+		sum_t  += timestamps[i];
+		sum_it += (double)i * timestamps[i];
+		sum_i2 += (double)i * (double)i;
+	}
+
+	double N = (double)count;
+	double denom = N * sum_i2 - sum_i * sum_i;
+	if (fabs(denom) < 1e-30)
+		return 0.0;
+
+	double slope = (N * sum_it - sum_i * sum_t) / denom;
+
+	// slope is in seconds per edge
+	// freq = 1 / (slope * (edge_skip + 1))
+	// edge_skip + 1 is accounted for by the caller
+	if (slope <= 0.0)
+		return 0.0;
+
+	return 1.0 / slope;
+}
+
+int ReadFr_TimestampMode(char *Freq)
+{
+	static double timestamps[1024]; // static to avoid FreeRTOS stack overflow (8KB)
+
+	// Adaptive edge_skip: target ~500 entries in FIFO
+	int edge_skip = 0;
+	if (FREF > 0) {
+		int expected_edges = (int)((double)FREF * (GATE_TIME / 1000.0));
+		if (expected_edges > 500)
+			edge_skip = expected_edges / 500 - 1;
+		if (edge_skip < 0)
+			edge_skip = 0;
+	}
+
+	// Read timestamps
+	int count = ReadTimestamps(timestamps, 1024, edge_skip);
+
+	// If FIFO was nearly full, retry with higher edge_skip
+	if (count >= 1020 && edge_skip < 10000) {
+		edge_skip = edge_skip * 2 + 1;
+		count = ReadTimestamps(timestamps, 1024, edge_skip);
+	}
+
+	if (count < 3) {
+		sprintf(Freq, "0.00000\n");
+		return -1;
+	}
+
+	// Compute frequency from linear regression
+	double freq = ComputeFreqFromTimestamps(timestamps, count);
+	freq *= (double)(edge_skip + 1);
+
+	sprintf(Freq, "%.5f\n", freq);
+	return 0;
+}
+

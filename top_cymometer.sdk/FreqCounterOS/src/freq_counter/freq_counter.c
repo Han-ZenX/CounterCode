@@ -142,19 +142,19 @@ int init_freqcounter(void)
 
 int SetCntGateMax(u32 cntgatemax)
 {
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG5,cntgatemax);
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG5,cntgatemax);
 	return 0;
 }
 
 int SetCntGateLow(u32 cntgatelow)
 {
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG6,cntgatelow);
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG6,cntgatelow);
 	return 0;
 }
 
 int SetClkFsFreq(u32 clkfsfreq)
 {
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG7,clkfsfreq);
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG7,clkfsfreq);
 	return 0;
 }
 
@@ -212,13 +212,13 @@ u32 ReadSTATUS1(void)
 
 int SetRESET(u32 RESET)
 {
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG13,RESET);
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG13,RESET);
     return 0;
 }
 
 int SetGATE(u32 GATE)
 {
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG14,GATE);
+	COUNTER_mWriteReg(COUNTER_BASEADDR,COUNTER_REG14,GATE);
 	return 0;
 }
 
@@ -280,8 +280,8 @@ double ReadStartT(char * Freq)
 
 	usleep(10); //寤舵椂10us
 
-	cnt_clk_stand_reg_1 = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG16);
-	cnt_clk_test_reg_1 = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG17);
+	cnt_clk_stand_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG16);
+	cnt_clk_test_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG17);
 	Fr = ((double)GetClkFsFreq() * (double)cnt_clk_test_reg_1 / (double)cnt_clk_stand_reg_1);
 
 	sprintf(Freq,"%.5f\n",Fr);
@@ -306,7 +306,7 @@ void InitStartT(void *p)
 
 	while(1)
 	{
-		START_T = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR,TOP_CYMOMETER_IP_REG18);
+		START_T = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG18);
 		if(START_T==1)
 		{
 			for(int i=0;i<1000;i++)
@@ -344,22 +344,22 @@ void InitStartT(void *p)
 
 u32 ReadTdcRefRise(void)
 {
-	return TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG19);
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG19);
 }
 
 u32 ReadTdcRefFall(void)
 {
-	return TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG20);
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG20);
 }
 
 u32 ReadTdcTestRise(void)
 {
-	return TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG21);
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG21);
 }
 
 u32 ReadTdcTestFall(void)
 {
-	return TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG22);
+	return COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG22);
 }
 
 //============================================================================
@@ -396,8 +396,8 @@ int ReadFr_TDC(char * Freq)
 	usleep(10);
 
 	// 绛夌簿搴︽祴棰戞硶 + TDC鏍℃
-	cnt_clk_stand_reg_1 = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG16);
-	cnt_clk_test_reg_1 = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG17);
+	cnt_clk_stand_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG16);
+	cnt_clk_test_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG17);
 
 	// Read TDC values
 	u32 tdc_rise_ref = ReadTdcRefRise();
@@ -434,16 +434,16 @@ int ReadTimestamps(double *timestamps, int max_count, int edge_skip)
 	u32 status, fifo_entries;
 
 	// Step 1: Reset timestamp engine (ts_reset=1, ts_enable=0)
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG23, 0x2);
+	COUNTER_mWriteReg(COUNTER_BASEADDR, COUNTER_REG23, 0x2);
 	// Reset FIFO read pointer to match write pointer (both at 0)
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG26, 0);
+	COUNTER_mWriteReg(COUNTER_BASEADDR, COUNTER_REG26, 0);
 	usleep(100);
 
 	// Step 2: Set edge_skip
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG24, (u32)edge_skip);
+	COUNTER_mWriteReg(COUNTER_BASEADDR, COUNTER_REG24, (u32)edge_skip);
 
 	// Step 3: Enable timestamp engine (ts_enable=1, ts_reset=0)
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG23, 0x1);
+	COUNTER_mWriteReg(COUNTER_BASEADDR, COUNTER_REG23, 0x1);
 	usleep(100); // CDC sync delay
 
 	// Step 4: Wait for measurement (use configured gate time)
@@ -453,11 +453,11 @@ int ReadTimestamps(double *timestamps, int max_count, int edge_skip)
 	usleep((unsigned long)sleep_time_us);
 
 	// Step 5: Disable engine (FIFO contents preserved)
-	TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG23, 0x0);
+	COUNTER_mWriteReg(COUNTER_BASEADDR, COUNTER_REG23, 0x0);
 	usleep(100);
 
 	// Step 6: Read FIFO status - bits [10:0] = entry count
-	status = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG25);
+	status = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG25);
 	fifo_entries = status & 0x7FF;
 
 	if (fifo_entries > (u32)max_count)
@@ -465,9 +465,9 @@ int ReadTimestamps(double *timestamps, int max_count, int edge_skip)
 
 	// Step 7: Read FIFO entries sequentially
 	for (u32 i = 0; i < fifo_entries; i++) {
-		TOP_CYMOMETER_IP_mWriteReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG26, i);
-		u32 cnt_val = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG27);
-		u32 tdc_val = TOP_CYMOMETER_IP_mReadReg(TOP_CYMOMETER_IP_BASEADDR, TOP_CYMOMETER_IP_REG28) & 0x3F;
+		COUNTER_mWriteReg(COUNTER_BASEADDR, COUNTER_REG26, i);
+		u32 cnt_val = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG27);
+		u32 tdc_val = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG28) & 0x3F;
 		timestamps[i] = ((double)cnt_val + (double)tdc_val / 64.0) / (double)GetClkFsFreq();
 	}
 

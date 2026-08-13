@@ -56,7 +56,7 @@ src/freertos_tcp_perf_server.o src/freertos_tcp_perf_server.o: \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/task.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_printf.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/bspconfig.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/top_cymometer_ip.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xstatus.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_assert.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xparameters.h \
@@ -189,7 +189,7 @@ src/freertos_tcp_perf_server.o src/freertos_tcp_perf_server.o: \
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/bspconfig.h:
 
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/top_cymometer_ip.h:
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h:
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xstatus.h:
 

@@ -18,7 +18,7 @@ src/uart/uart.o src/uart/uart.o: ../src/uart/uart.c ../src/uart/uart.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xscugic.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xscugic_hw.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_exception.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/top_cymometer_ip.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h \
  ../src/uart/../freq_counter/freq_counter.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_types.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ff.h \
@@ -66,7 +66,7 @@ src/uart/uart.o src/uart/uart.o: ../src/uart/uart.c ../src/uart/uart.h \
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_exception.h:
 
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/top_cymometer_ip.h:
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h:
 
 ../src/uart/../freq_counter/freq_counter.h:
 

@@ -24,7 +24,7 @@ src/freq_counter/freq_counter.o src/freq_counter/freq_counter.o: \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/integer.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ffconf.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/top_cymometer_ip.h
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h
 
 ../src/freq_counter/freq_counter.h:
 
@@ -76,4 +76,4 @@ src/freq_counter/freq_counter.o src/freq_counter/freq_counter.o: \
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h:
 
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/top_cymometer_ip.h:
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h:

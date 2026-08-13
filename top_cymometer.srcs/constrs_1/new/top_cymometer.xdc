@@ -6,12 +6,12 @@ set_property -dict {PACKAGE_PIN U18 IOSTANDARD LVCMOS33} [get_ports sys_clk]
 set_property -dict {PACKAGE_PIN N16 IOSTANDARD LVCMOS33} [get_ports sys_rst_n]
 
 #基准时钟clk_fs
-set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets ps_i/top_cymometer_ip_0/inst/clk_312_5m]
+set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets ps_i/Counter_0/inst/clk_fs_O]
 set_property PACKAGE_PIN Y12 [get_ports clk_fs_p]
 set_property IOSTANDARD LVDS_25 [get_ports clk_fs_p]
 
 #被测时钟clk_fx
-set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets ps_i/top_cymometer_ip_0/inst/clk_fx_O]
+set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets ps_i/Counter_0/inst/clk_fx_O]
 set_property PACKAGE_PIN B19 [get_ports clk_fx_p]
 set_property IOSTANDARD LVDS_25 [get_ports clk_fx_p]
 
