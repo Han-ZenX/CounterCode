@@ -1,14 +1,14 @@
 /*
  * freq_counter.c
  *
- *  Created on: 2025-04-11
+ *  Created on: 2025骞�4鏈�11鏃�
  *      Author: hanzheng
  */
 #include "freq_counter.h"
 
-int FREF; // Reference frequency
+int FREF; //鍙傝�冮鐜�
 
-double START_T_TIME;  // Unit: ms
+double START_T_TIME;  //鍗曚綅ms
 
 int START_T_END;
 
@@ -18,8 +18,8 @@ double GATE_TIME = 0; //ms
 
 double START_GATE_TIME = 0; //ms
 
-u32 g_clk_fs_freq = CLK_FS_FREQ; // Reference clock frequency loaded from SD card
-u32 g_clk_fs_freq_sd = CLK_FS_FREQ; // Cached SD card frequency
+u32 g_clk_fs_freq = CLK_FS_FREQ; // SD卡加载的基准时钟频率
+u32 g_clk_fs_freq_sd = CLK_FS_FREQ; // SD卡频率缓存
 
 //============================================================================
 // SD Card Clock Frequency Management
@@ -94,7 +94,7 @@ int SaveClkFsFreq(u32 freq)
 
 u32 GetClkFsFreq(void)
 {
-	// STATUS0=1: use SD card calibrated frequency, STATUS0=0: use ideal 312.5MHz
+	// STATUS0=1: 使用SD卡校准频率, STATUS0=0: 使用理想312.5MHz
 	if (ReadSTATUS0() == 1)
 		return g_clk_fs_freq_sd;
 	else
@@ -131,7 +131,7 @@ int init_freqcounter(void)
 
 	SetRESET(1);
 
-	usleep(10); // delay 10us
+	usleep(10); //寤舵椂10us
 
 	SetRESET(0);
 
@@ -213,8 +213,8 @@ u32 ReadSTATUS1(void)
 u32 ReadSTARTT(void)
 {
 	u32 STARTT;
-	STARTT = COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG2);
-	return STARTT;
+	STATUS1 = COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR,COUNTER_SIG_REG2);
+	return STATUS1;
 }
 
 int SetRESET(u32 RESET)
@@ -235,11 +235,11 @@ int ReadFr(char * Freq)
 	u32 safe_limit = nyquist_limit * 0.9;
 	if (FREF > safe_limit)
 	{
-		return ReadFr_TDC(Freq);// Equal-precision method, not bound by the Nyquist limit
+		return ReadFr_TDC(Freq);//等精度法，无奈奎斯特限制
 	}
 	else
 	{
-		return ReadFr_TimestampMode(Freq); // Timestamp method, higher precision
+		return ReadFr_TimestampMode(Freq); //时间戳法，高精度
 	}
 }
 
@@ -275,17 +275,17 @@ double ReadStartT(char * Freq)
 
 	SetRESET(1);
 
-	usleep(10); // delay 10us
+	usleep(10); //寤舵椂10us
 
 	SetRESET(0);
 
 	SetGATE(1);
 
-	usleep(sleep_time); // delay 100000us = 100ms
+	usleep(sleep_time); //寤舵椂100000us = 100ms
 
 	SetGATE(0);
 
-	usleep(10); // delay 10us
+	usleep(10); //寤舵椂10us
 
 	cnt_clk_stand_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG16);
 	cnt_clk_test_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG17);
@@ -298,6 +298,8 @@ double ReadStartT(char * Freq)
 
 void InitStartT(void *p)
 {
+	u32 START_T = 0;
+
 	START_T_TIME = 0;
 
 	START_T_END = 0;
@@ -311,7 +313,8 @@ void InitStartT(void *p)
 
 	while(1)
 	{
-		if(ReadSTARTT()==1)
+		START_T = COUNTER_mReadReg(COUNTER_BASEADDR,COUNTER_REG18);
+		if(START_T==1)
 		{
 			for(int i=0;i<1000;i++)
 			{
@@ -369,12 +372,12 @@ u32 ReadTdcTestFall(void)
 //============================================================================
 // ReadFr_TDC - ReadFr with TDC sub-cycle correction
 //
-// TDC correction formula (equal-precision frequency measurement):
+// TDC correction formula (绛夌簿搴︽祴棰戞硶):
 //   eff_stand = cnt_stand + tdc_ref_rise/64 - tdc_ref_fall/64
 //   eff_test  = cnt_test  + tdc_test_rise/64 - tdc_test_fall/64
 //   Fr = (eff_test / eff_stand) * CLK_FS_FREQ
 //
-// This eliminates the +/-1 counter quantization error on both sides,
+// This eliminates the 卤1 counter quantization error on both sides,
 // improving resolution from ~1ppm to <0.001ppm (100ms gate).
 //============================================================================
 int ReadFr_TDC(char * Freq)
@@ -399,7 +402,7 @@ int ReadFr_TDC(char * Freq)
 	SetGATE(0);
 	usleep(10);
 
-	// Equal-precision frequency measurement + TDC correction
+	// 绛夌簿搴︽祴棰戞硶 + TDC鏍℃
 	cnt_clk_stand_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG16);
 	cnt_clk_test_reg_1 = COUNTER_mReadReg(COUNTER_BASEADDR, COUNTER_REG17);
 
@@ -409,7 +412,7 @@ int ReadFr_TDC(char * Freq)
 	u32 tdc_rise_test = ReadTdcTestRise();
 	u32 tdc_fall_test = ReadTdcTestFall();
 
-	// TDC correction: effective count = integer count + start fraction - end fraction
+	// TDC鏍℃: 鏈夋晥璁℃暟 = 鏁存暟璁℃暟 + 璧峰灏忔暟 - 缁撴潫灏忔暟
 	double eff_stand = (double)cnt_clk_stand_reg_1
 		+ (double)tdc_rise_ref / (double)TDC_NUM_TAPS
 		- (double)tdc_fall_ref / (double)TDC_NUM_TAPS;
@@ -418,7 +421,7 @@ int ReadFr_TDC(char * Freq)
 		+ (double)tdc_rise_test / (double)TDC_NUM_TAPS
 		- (double)tdc_fall_test / (double)TDC_NUM_TAPS;
 
-	// Make sure the effective counts are positive
+	// 纭繚鏈夋晥璁℃暟涓烘鏁�
 	if (eff_stand > 0 && eff_test > 0)
 		Fr = ((double)GetClkFsFreq() * eff_test / eff_stand);
 	else
