@@ -19,9 +19,11 @@
 <includePath path="#undef __ARM_FP16_FORMAT_IEEE" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_UNALIGNED" removed="true"/>
 <includePath path="f:\xilinx\sdk\2018.3\gnu\aarch32\nt\gcc-arm-none-eabi\bin\../arm-none-eabi/libc/usr/include"/>
+<includePath path="#undef __ARM_FEATURE_DOTPROD" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_FMA" removed="true"/>
 <includePath path="#undef __ARM_FP16_FORMAT_ALTERNATIVE" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_QRDMX" removed="true"/>
+<includePath path="#undef __ARM_FEATURE_CRC32" removed="true"/>
 <definedSymbol symbol="__STDC__=1"/>
 <definedSymbol symbol="__STDC_VERSION__=201112L"/>
 <definedSymbol symbol="__STDC_UTF_16__=1"/>
