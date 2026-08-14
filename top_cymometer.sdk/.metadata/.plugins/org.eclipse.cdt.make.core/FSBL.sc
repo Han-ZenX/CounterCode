@@ -2,11 +2,14 @@
 <?scdStore version="2"?><scannerInfo id="org.eclipse.cdt.make.core.discoveredScannerInfo">
 <instance id="xilinx.gnu.armv7.exe.debug.367574909;xilinx.gnu.armv7.exe.debug.367574909.">
 <collector id="org.eclipse.cdt.make.core.PerProjectSICollector">
+<includePath path="#undef __thumb__" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_DSP" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_QBIT" removed="true"/>
 <includePath path="f:\xilinx\sdk\2018.3\gnu\aarch32\nt\gcc-arm-none-eabi\bin\../lib/gcc/arm-none-eabi/7.3.1/include"/>
+<includePath path="#undef __thumb2__" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_SAT" removed="true"/>
 <includePath path="f:\xilinx\sdk\2018.3\gnu\aarch32\nt\gcc-arm-none-eabi\bin\../lib/gcc/arm-none-eabi/7.3.1/include-fixed"/>
+<includePath path="#undef __THUMBEL__" removed="true"/>
 <includePath path="#undef __ARM_FP" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_CRYPTO" removed="true"/>
 <includePath path="f:\xilinx\sdk\2018.3\gnu\aarch32\nt\gcc-arm-none-eabi\bin\../lib/gcc/arm-none-eabi/7.3.1/../../../../arm-none-eabi/include"/>

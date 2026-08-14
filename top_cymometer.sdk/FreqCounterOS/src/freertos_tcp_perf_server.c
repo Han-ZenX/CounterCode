@@ -150,20 +150,23 @@ void tcp_recv_perf_traffic(void *p)
 
 	while (1)
 	{
-		memcpy(Tcp_Rec_Buf, 0, sizeof(Tcp_Rec_Buf));
-
-		/* read a max of RECV_BUF_SIZE bytes from socket */
-		if ((n = read(sock, Tcp_Rec_Buf, RECV_BUF_SIZE)) < 0) {
+		/* read a max of RECV_BUF_SIZE-1 bytes, leaving room to terminate */
+		if ((n = read(sock, Tcp_Rec_Buf, RECV_BUF_SIZE - 1)) < 0) {
 			xil_printf("%s: error reading from socket %d, closing socket\r\n", __FUNCTION__, sock);
 			break;
 		}
 
-		/* break if the recved message = "quit" */
-		if (!strncmp(Tcp_Rec_Buf, "quit", 4))
-			break;
-
 		/* break if client closed connection */
 		if (n <= 0)
+			break;
+
+		/* Terminate the line. The command parser scans up to a NUL, so
+		 * without this it would read past the new data into whatever the
+		 * previous command left in the buffer. */
+		Tcp_Rec_Buf[n] = '\0';
+
+		/* break if the recved message = "quit" */
+		if (!strncmp(Tcp_Rec_Buf, "quit", 4))
 			break;
 
 		tcp_data_process(sock);
@@ -242,245 +245,9 @@ void start_application(void)
 
 void tcp_data_process(int sock)
 {
-	if(Tcp_Rec_Buf[0] == '*')
-	{
-		if(Tcp_Rec_Buf[1] == 'I' && Tcp_Rec_Buf[2] == 'D' && Tcp_Rec_Buf[3] == 'N' && Tcp_Rec_Buf[4] == '?')
-		{
-			char *data="HALLIWAY,FREQ-COUNTER,C1804,1.00-1.00-01-1\n";
-			write(sock, data, strlen(data));
-		}
-		else if(Tcp_Rec_Buf[1] == 'R' && Tcp_Rec_Buf[2] == 'S' && Tcp_Rec_Buf[3] == 'T')
-		{
-			//RST功能
-		}
-		else if(Tcp_Rec_Buf[1] == 'O' && Tcp_Rec_Buf[2] == 'P' && Tcp_Rec_Buf[3] == 'C' && Tcp_Rec_Buf[4] == '?')
-		{
-			//OPC?功能
-		}
-	}
-	else if(Tcp_Rec_Buf[0] == 'R' && Tcp_Rec_Buf[1] == 'E' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'D' && Tcp_Rec_Buf[4] == '?')
-	{
-		char Freq[300];
-		ReadFr(Freq);
-		write(sock, Freq, strlen(Freq));
-	}
-	else if(Tcp_Rec_Buf[0] == 'M' && Tcp_Rec_Buf[1] == 'E' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'S' && Tcp_Rec_Buf[4] == ':'&& Tcp_Rec_Buf[5] == 'F'&& Tcp_Rec_Buf[6] == 'R'&& Tcp_Rec_Buf[7] == 'E'&& Tcp_Rec_Buf[8] == 'Q'&& Tcp_Rec_Buf[9] == '?')
-	{
-		char Freq[300];
-		ReadFr(Freq);
-		write(sock, Freq, strlen(Freq));
-	}
-	else if(Tcp_Rec_Buf[0] == 'C' && Tcp_Rec_Buf[1] == 'O' && Tcp_Rec_Buf[2] == 'N' && Tcp_Rec_Buf[3] == 'F' && Tcp_Rec_Buf[4] == ':'
-				&& Tcp_Rec_Buf[5] == 'F'&& Tcp_Rec_Buf[6] == 'R'&& Tcp_Rec_Buf[7] == 'E'&& Tcp_Rec_Buf[8] == 'Q'&& Tcp_Rec_Buf[9] == '?')
-	{
-		char  Fref[300];
-		sprintf(&Fref,"%d\n",FREF);
-		write(sock, Fref, strlen(Fref));
-	}
-	else if(Tcp_Rec_Buf[0] == 'C' && Tcp_Rec_Buf[1] == 'O' && Tcp_Rec_Buf[2] == 'N' && Tcp_Rec_Buf[3] == 'F' && Tcp_Rec_Buf[4] == ':'
-			&& Tcp_Rec_Buf[5] == 'F'&& Tcp_Rec_Buf[6] == 'R'&& Tcp_Rec_Buf[7] == 'E'&& Tcp_Rec_Buf[8] == 'Q'&& Tcp_Rec_Buf[9] == ' ')
-	{
-		FREF = 0;        //参考频率
+	char resp[SCPI_RESP_MAX];
+	int len = scpi_execute(Tcp_Rec_Buf, resp);
 
-		char recv[300];
-
-		// 找到第一个回车或换行符的位置
-		size_t len = strcspn(Tcp_Rec_Buf, "\n");
-
-		// 复制回车换行符之前的内容
-		strncpy(recv, Tcp_Rec_Buf, len);
-		recv[len] = '\0';
-
-		char *recv_freq = recv + 9; // 跳过前9个字符
-
-		FREF = atoi(recv_freq);
-
-	}
-	else if(Tcp_Rec_Buf[0] == 'F' && Tcp_Rec_Buf[1] == 'R' && Tcp_Rec_Buf[2] == 'E' && Tcp_Rec_Buf[3] == 'Q' && Tcp_Rec_Buf[4] == ':'
-			&& Tcp_Rec_Buf[5] == 'G'&& Tcp_Rec_Buf[6] == 'A'&& Tcp_Rec_Buf[7] == 'T'&& Tcp_Rec_Buf[8] == 'E'&& Tcp_Rec_Buf[9] == ':'
-					&& Tcp_Rec_Buf[10] == 'T'&& Tcp_Rec_Buf[11] == 'I'&& Tcp_Rec_Buf[12] == 'M'&& Tcp_Rec_Buf[13] == 'E'&& Tcp_Rec_Buf[14] == '?')
-	{
-		char  Gate[300];
-		sprintf(&Gate,"%.3f\n",GATE_TIME);
-		write(sock,Gate, strlen(Gate));
-	}
-	else if(Tcp_Rec_Buf[0] =='F' && Tcp_Rec_Buf[1] == 'R' && Tcp_Rec_Buf[2] == 'E' && Tcp_Rec_Buf[3] == 'Q' && Tcp_Rec_Buf[4] == ':')
-	{
-		if(Tcp_Rec_Buf[5] =='G' && Tcp_Rec_Buf[6] == 'A' && Tcp_Rec_Buf[7] == 'T' && Tcp_Rec_Buf[8] == 'E' && Tcp_Rec_Buf[9] == ':')
-		{
-			if(Tcp_Rec_Buf[10] =='T' && Tcp_Rec_Buf[11] == 'I' && Tcp_Rec_Buf[12] == 'M' && Tcp_Rec_Buf[13] == 'E' && Tcp_Rec_Buf[14] == ' ')
-			{
-				char recv[300];
-
-				GATE_TIME = 0;        //参考频率
-
-				// 找到第一个回车或换行符的位置
-				size_t len = strcspn(Tcp_Rec_Buf, "\n");
-
-				// 复制回车换行符之前的内容
-				strncpy(recv, Tcp_Rec_Buf, len);
-				recv[len] = '\0';
-
-				char *recv_gate = recv + 15; // 跳过前15个字符
-
-				GATE_TIME = atof(recv_gate) * 1000;
-
-				SetGate(GATE_TIME);
-			}
-		}
-	}
-	else if(Tcp_Rec_Buf[0] =='S' && Tcp_Rec_Buf[1] == 'T' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'R' && Tcp_Rec_Buf[4] == 'T' && Tcp_Rec_Buf[5] == ':'
-			&& Tcp_Rec_Buf[6] =='G' && Tcp_Rec_Buf[7] == 'A' && Tcp_Rec_Buf[8] == 'T' && Tcp_Rec_Buf[9] == 'E' && Tcp_Rec_Buf[10] == ':'
-					&& Tcp_Rec_Buf[11] =='T' && Tcp_Rec_Buf[12] == 'I' && Tcp_Rec_Buf[13] == 'M' && Tcp_Rec_Buf[14] == 'E' && Tcp_Rec_Buf[15] == '?')
-	{
-		char  Start_Gate[300];
-		sprintf(&Start_Gate,"%.3f\n",START_GATE_TIME);
-		write(sock,Start_Gate, strlen(Start_Gate));
-	}
-	else if(Tcp_Rec_Buf[0] =='S' && Tcp_Rec_Buf[1] == 'T' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'R' && Tcp_Rec_Buf[4] == 'T' && Tcp_Rec_Buf[5] == ':')
-	{
-		if(Tcp_Rec_Buf[6] =='G' && Tcp_Rec_Buf[7] == 'A' && Tcp_Rec_Buf[8] == 'T' && Tcp_Rec_Buf[9] == 'E' && Tcp_Rec_Buf[10] == ':')
-		{
-			if(Tcp_Rec_Buf[11] =='T' && Tcp_Rec_Buf[12] == 'I' && Tcp_Rec_Buf[13] == 'M' && Tcp_Rec_Buf[14] == 'E' && Tcp_Rec_Buf[15] == ' ')
-			{
-				char recv[300];
-
-				START_GATE_TIME = 0;        //参考频率
-
-				// 找到第一个回车或换行符的位置
-				size_t len = strcspn(Tcp_Rec_Buf, "\n");
-
-				// 复制回车换行符之前的内容
-				strncpy(recv, Tcp_Rec_Buf, len);
-				recv[len] = '\0';
-
-				char *recv_start_gate = recv + 16; // 跳过前16个字符
-
-				START_GATE_TIME = atof(recv_start_gate) * 1000;
-			}
-		}
-	}
-	else if(Tcp_Rec_Buf[0] =='S' && Tcp_Rec_Buf[1] == 'I' && Tcp_Rec_Buf[2] == 'G' && Tcp_Rec_Buf[3] == ':')
-	{
-		if(Tcp_Rec_Buf[4] =='P' && Tcp_Rec_Buf[5] == 'R' && Tcp_Rec_Buf[6] == 'I' && Tcp_Rec_Buf[7] == 'R' && Tcp_Rec_Buf[8] == 'E' && Tcp_Rec_Buf[9] == 'F' && Tcp_Rec_Buf[10] == ' ')
-		{
-			if(Tcp_Rec_Buf[11] =='1')
-			{
-				Set_CTR_PRIREF(1);
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-			else if(Tcp_Rec_Buf[11] =='0')
-			{
-				Set_CTR_PRIREF(0);
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-		}
-		else if(Tcp_Rec_Buf[4] =='R' && Tcp_Rec_Buf[5] == 'E' && Tcp_Rec_Buf[6] == 'F' && Tcp_Rec_Buf[7] == 'C' && Tcp_Rec_Buf[8] == 'L' && Tcp_Rec_Buf[9] == 'O' && Tcp_Rec_Buf[10] == 'C'&& Tcp_Rec_Buf[11] == 'K'&& Tcp_Rec_Buf[12] == ' ')
-		{
-			if(Tcp_Rec_Buf[13] =='1')
-			{
-				Set_CTR_REF_CLOCK(1);
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-			else if(Tcp_Rec_Buf[13] =='0')
-			{
-				Set_CTR_REF_CLOCK(0);
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-		}
-		else if(Tcp_Rec_Buf[4] =='O' && Tcp_Rec_Buf[5] == 'C' && Tcp_Rec_Buf[6] == 'X' && Tcp_Rec_Buf[7] == 'O' && Tcp_Rec_Buf[8] == ' ')
-		{
-			if(Tcp_Rec_Buf[9] =='1')
-			{
-				Set_CTR_OCXO(1);
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-			else if(Tcp_Rec_Buf[9] =='0')
-			{
-				Set_CTR_OCXO(0);
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-		}
-		else if(Tcp_Rec_Buf[4] =='S' && Tcp_Rec_Buf[5] == 'T' && Tcp_Rec_Buf[6] == 'A' && Tcp_Rec_Buf[7] == 'T'
-				&& Tcp_Rec_Buf[8] == 'U'&& Tcp_Rec_Buf[9] == 'S'&& Tcp_Rec_Buf[10] == '0'&& Tcp_Rec_Buf[11] == '?')
-		{
-			u32 STATUS0 = ReadSTATUS0();
-			if(STATUS0 == 0)
-			{
-				char data[]="0\n";
-				write(sock, data, strlen(data));
-			}
-			else
-			{
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-		}
-		else if(Tcp_Rec_Buf[4] =='S' && Tcp_Rec_Buf[5] == 'T' && Tcp_Rec_Buf[6] == 'A' && Tcp_Rec_Buf[7] == 'T'
-						&& Tcp_Rec_Buf[8] == 'U'&& Tcp_Rec_Buf[9] == 'S'&& Tcp_Rec_Buf[10] == '1'&& Tcp_Rec_Buf[11] == '?')
-		{
-			u32 STATUS1 = ReadSTATUS1();
-			if(STATUS1 == 0)
-			{
-				char data[]="0\n";
-				write(sock, data, strlen(data));
-			}
-			else
-			{
-				char data[]="1\n";
-				write(sock, data, strlen(data));
-			}
-		}
-	}
-	else if(Tcp_Rec_Buf[0] =='P' && Tcp_Rec_Buf[1] == 'P' && Tcp_Rec_Buf[2] == 'M' && Tcp_Rec_Buf[3] == '?')
-	{
-		char ppm[300];
-		sprintf(&ppm,"%d\n",PPM);
-		write(sock,ppm, strlen(ppm));
-	}
-	else if(Tcp_Rec_Buf[0] =='P' && Tcp_Rec_Buf[1] == 'P' && Tcp_Rec_Buf[2] == 'M' && Tcp_Rec_Buf[3] == ' ')
-	{
-		PPM = 0;  //ppm
-
-		char recv[300];
-
-		// 找到第一个回车或换行符的位置
-		size_t len = strcspn(Tcp_Rec_Buf, "\n");
-
-		// 复制回车换行符之前的内容
-		strncpy(recv, Tcp_Rec_Buf, len);
-		recv[len] = '\0';
-
-		char *recv_ppm = recv + 4; // 跳过前4个字符
-
-		PPM = atoi(recv_ppm);
-	}
-	else if(Tcp_Rec_Buf[0] =='I' && Tcp_Rec_Buf[1] == 'N' && Tcp_Rec_Buf[2] == 'I' && Tcp_Rec_Buf[3] == 'T')
-	{
-		InitStartT(NULL);
-		//sys_thread_new("StartT_thread", InitStartT, NULL,
-		//			1024, 1);
-	}
-	else if(Tcp_Rec_Buf[0] =='R' && Tcp_Rec_Buf[1] == 'E' && Tcp_Rec_Buf[2] == 'A' && Tcp_Rec_Buf[3] == 'D' && Tcp_Rec_Buf[4] == ':'
-			&& Tcp_Rec_Buf[5] == 'T' && Tcp_Rec_Buf[6] == 'I' && Tcp_Rec_Buf[7] == 'M' && Tcp_Rec_Buf[8] == 'E' && Tcp_Rec_Buf[9] == '?')
-	{
-		char startT[300];
-
-		while(1)
-		{
-			if(START_T_END==1)
-			{
-				break;
-			}
-		}
-
-		sprintf(&startT,"%.3f\n",START_T_TIME);
-		write(sock,startT, strlen(startT));
-	}
+	if (len > 0)
+		write(sock, resp, len);
 }

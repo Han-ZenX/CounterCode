@@ -40,7 +40,7 @@
 #include "Counter.h"
 #include "xparameters.h"
 
-#include "../freq_counter/freq_counter.h"
+#include "../scpi/scpi.h"
 
 #define TOP_CYMOMETER_IP_BASEADDR XPAR_COUNTER_SIG_0_S_AXI_BASEADDR
 #define TOP_CYMOMETER_IP_REG0 COUNTER_S_AXI_SLV_REG0_OFFSET

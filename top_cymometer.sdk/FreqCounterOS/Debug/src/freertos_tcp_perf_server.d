@@ -73,7 +73,8 @@ src/freertos_tcp_perf_server.o src/freertos_tcp_perf_server.o: \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ff.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/integer.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ffconf.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h \
+ ../src/scpi/scpi.h
 
 ../src/freertos_tcp_perf_server.h:
 
@@ -224,3 +225,5 @@ src/freertos_tcp_perf_server.o src/freertos_tcp_perf_server.o: \
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ffconf.h:
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h:
+
+../src/scpi/scpi.h:

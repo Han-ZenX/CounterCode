@@ -18,5 +18,6 @@ ELFSIZE :=
 SUBDIRS := \
 src \
 src/freq_counter \
+src/scpi \
 src/uart \
 

@@ -41,6 +41,7 @@
 #include "xparameters.h"
 
 #include "freq_counter/freq_counter.h"
+#include "scpi/scpi.h"
 
 /* used as indices into kLabel[] */
 enum {

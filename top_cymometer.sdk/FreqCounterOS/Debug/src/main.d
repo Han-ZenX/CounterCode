@@ -66,12 +66,7 @@ src/main.o src/main.o: ../src/main.c \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xscugic_hw.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_exception.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h \
- ../src/uart/../freq_counter/freq_counter.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_types.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ff.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/integer.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ffconf.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h \
+ ../src/uart/../scpi/scpi.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/lwip/init.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/lwip/inet.h
 
@@ -209,17 +204,7 @@ src/main.o src/main.o: ../src/main.c \
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h:
 
-../src/uart/../freq_counter/freq_counter.h:
-
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_types.h:
-
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ff.h:
-
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/integer.h:
-
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/ffconf.h:
-
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Sig.h:
+../src/uart/../scpi/scpi.h:
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/lwip/init.h:
 
