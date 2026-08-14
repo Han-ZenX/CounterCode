@@ -37,7 +37,7 @@
 #include "stdio.h"
 #include <String.h>
 
-#include "Counter.h"
+#include "Counter_Core.h"
 #include "xparameters.h"
 
 #include "../scpi/scpi.h"

@@ -7,6 +7,8 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 ## 0. 请始终使用简体中文回答。
 
+## 0.1 代码注释都用英文
+
 这是一个Vivado FPGA工程。
 
 ## 1. Think Before Coding

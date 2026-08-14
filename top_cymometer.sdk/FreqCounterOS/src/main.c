@@ -31,7 +31,7 @@
 #include "platform_config.h"
 #include "xil_printf.h"
 #include "uart/uart.h"
-#include "Counter.h"
+#include "Counter_Core.h"
 #include "xparameters.h"
 
 #include "lwip/init.h"

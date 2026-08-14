@@ -18,7 +18,7 @@ src/uart/uart.o src/uart/uart.o: ../src/uart/uart.c ../src/uart/uart.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xscugic.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xscugic_hw.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_exception.h \
- ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Core.h \
  ../src/uart/../scpi/scpi.h
 
 ../src/uart/uart.h:
@@ -61,6 +61,6 @@ src/uart/uart.o src/uart/uart.o: ../src/uart/uart.c ../src/uart/uart.h \
 
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_exception.h:
 
-../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter.h:
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Core.h:
 
 ../src/uart/../scpi/scpi.h:

@@ -9,7 +9,7 @@
 #include <string.h>
 
 #include "scpi.h"
-#include "../freq_counter/freq_counter.h"
+#include "../freq_counter_core/freq_counter_core.h"
 
 typedef int (*scpi_handler_t)(const char *args, char *resp);
 

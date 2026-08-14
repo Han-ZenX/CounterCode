@@ -30,12 +30,12 @@
             └──┬──────────┬───────┬──┘        │ axi_smc  │
                │M00       │M01    │M02        └────┬─────┘
                │          │       │                │
-    ┌──────────┴──┐  ┌────┴────┐  │           ┌────┴──────┐
-    │ Counter_Sig │  │ Counter │  └───────────┤ axi_dma_0 │
-    │ 0x43C00000  │  │0x43C10000│             │0x40400000 │
-    └─────────────┘  └────┬────┘              └────┬──────┘
-                          │ M_AXIS                 │ S_AXIS_S2MM
-                          └────► axis_data_fifo_0 ─┘
+    ┌──────────┴──┐  ┌──────┴───────┐ │          ┌────┴──────┐
+    │ Counter_Sig │  │ Counter_Core │ └──────────┤ axi_dma_0 │
+    │ 0x43C00000  │  │  0x43C10000  │            │0x40400000 │
+    └─────────────┘  └──────┬───────┘            └────┬──────┘
+                            │ M_AXIS 64 bit           │ S_AXIS_S2MM
+                            └──► axis_data_fifo_0 ────┘
 ```
 
 外部接口：
@@ -53,17 +53,34 @@
 
 ### 自定义 IP
 
-**`Counter` v1.0** (`ip_repo/Counter/Counter_1.0`) — 测频核心
+**`Counter_Core` v1.0** (`ip_repo/Counter_Core/Counter_Core_1.0`) — 测频核心（**当前使用**）
+
+对标 Keysight 53230A 的 gap-free 连续时间戳模型。接口与寄存器定义见
+[interface_spec.md](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
+
+`hdl/` 放打包器生成的 AXI 接口层，`src/` 放测量核心（沿用旧 IP 的目录约定）。
 
 ```
-Counter_v1_0.v                 顶层：IBUFDS + BUFG 接收 LVDS 差分时钟
-├── Counter_v1_0_S_AXI.v       AXI4-Lite 从机，内含 top_cymometer 实例
-│   └── top_cymometer.v
-│       └── cymometer.v        测频主体
-│           ├── tdc.v          × 3  CARRY4 延迟链 TDC
-│           └── timestamp_engine.v   时间戳引擎 + 异步 FIFO
-└── Counter_v1_0_M_AXIS.v      AXI-Stream 主机（模板代码，未接实际数据）
+hdl/Counter_Core_v1_0.v             顶层：IBUFDS + BUFG 接收 LVDS 差分时钟
+├── hdl/Counter_Core_v1_0_S_AXI.v   AXI4-Lite 寄存器文件（12 个语义寄存器，不含测量逻辑）
+├── src/counter_core.v              测量核心互连，统一三个时钟域的复位与 CDC
+│   ├── src/ts_engine.v             gap-free 时间戳引擎 + 4096 深异步 FIFO
+│   │   └── src/tdc.v               CARRY4 延迟链 TDC
+│   ├── src/eq_counter.v            等精度计数 + 硬件闸门（高频退路）
+│   │   └── src/tdc.v
+│   └── src/cdc.v                   复位同步 / 电平同步 / 计数器跨域
+└── hdl/Counter_Core_v1_0_M_AXIS.v  64 位时间戳流 → axis_data_fifo → DMA
 ```
+
+与旧 `Counter` IP 的三点结构差异：
+
+- **测量逻辑从 S_AXI 中剥离**。旧版把 `top_cymometer` 实例化在 S_AXI 内部，
+  1505 行里 1300 行是模板生成的 100 个通用寄存器，实际只用了十几个
+- **闸门由硬件定时**。`GATE_LEN` 是真实的 `clk_fs` 计数器预置值，不再靠软件 `usleep`
+- **时间戳经 DMA 连续流出**，不再逐条轮询 FIFO
+
+> `ip_repo/Counter/Counter_1.0/` 是被 `Counter_Core` 取代的上一版 IP，已从 BD 中移除。
+> `ip_repo/top_cymometer_ip_1.6/` 是更早的版本，同样弃用。
 
 **`Counter_Sig` v1.0** (`ip_repo/Counter_Sig/Counter_Sig_1.0`) — 控制/状态信号
 
@@ -75,62 +92,80 @@ Counter_v1_0.v                 顶层：IBUFDS + BUFG 接收 LVDS 差分时钟
 
 ```
 FreqCounterOS/src/
-├── main.c                        FreeRTOS 启动、lwIP 初始化、静态 IP 配置
-├── freertos_tcp_perf_server.c    TCP 服务器 + 命令解析 (tcp_data_process)
-├── freq_counter/freq_counter.c   测频算法、寄存器读写、SD 卡校准
-├── uart/uart.c                   UART 中断驱动与命令解析（当前未接入，见「已知问题」）
-├── iic_phyreset.c                PHY 复位（可选）
+├── main.c                              FreeRTOS 启动、lwIP 初始化、静态 IP 配置
+├── freertos_tcp_perf_server.c          TCP 服务器 + 命令解析 (tcp_data_process)
+├── scpi/scpi.c                         SCPI 命令表与分发
+├── freq_counter_core/                  测频层（对接 Counter_Core，当前使用）
+│   ├── freq_counter_core.c             等精度 / DMA 时间戳 / 回归 / SD 卡校准
+│   └── freq_counter_core.h             寄存器映射、时间戳字段宏、TDC 开关
+├── freq_counter/                       旧测频层（对接已移除的 Counter IP，不参与编译）
+├── uart/uart.c                         UART 中断驱动与命令解析（当前未接入，见「已知问题」）
+├── iic_phyreset.c                      PHY 复位（可选）
 └── platform_config.h
 ```
 
+> `freq_counter/` 引用了已不存在的 `Counter.h` 与 `XPAR_COUNTER_0_S_AXI_BASEADDR`，
+> 必须在 SDK 中 Exclude from Build，否则整个工程编译不过。
+
 ## 测量原理
 
-PL 提供三套并行的测量机制，由软件按被测频率选择组合。
+主路径是 gap-free 连续时间戳，等精度计数作为超奈奎斯特频段的退路。
 
-### 1. 等精度计数
+### 1. 时间戳引擎（主路径）
 
-`cymometer.v` 中，闸门信号 `gate_sig` 分别经三级同步器进入基准时钟域和被测时钟域，两个计数器在各自域内统计闸门开启期间的周期数：
+`ts_engine.v` 对被测信号的每个上升沿（或每 `edge_skip+1` 个）生成一条
+**64 位**时间戳：32 位粗计数（基准时钟域，3.2 ns/LSB）+ 6 位 TDC 细值 +
+溢出标记 + TDC 有效位 + 24 位序号。
 
-- `cnt_clk_stand_reg` — 基准时钟周期数
-- `cnt_clk_test_reg` — 被测信号周期数
+时间戳写入 4096 深异步 FIFO，再经 AXI-Stream → `axi_dma` → HP0 连续写入 DDR。
+**采集期间 CPU 不参与搬运**，软件只需启动、等完成、取数。
 
-闸门本身由软件通过 `usleep` 控制开关时长，不由硬件定时。
+gap-free 的语义是"要么一条不丢，要么明确告诉你丢在哪"：每条带序号，
+溢出时置 `ovf` 标记并累加 `LOST_COUNT`。软件用最小二乘拟合整段序列求频率。
 
-### 2. TDC 亚周期插值
+实测：4096 条连续时间戳、819 μs、**0.002 ppm**（5 MHz 被测，连续两次结果一致）。
 
-`tdc.v` 用 16 级 CARRY4 组成 64 抽头进位延迟链（约 50 ps/抽头，满量程 3.2 ns = 一个基准时钟周期）。采样后得到温度计码，经优先编码器转成 0~63 的二进制值。
+### 2. 等精度计数（高频退路）
 
-模块内例化 3 个 TDC：基准域闸门 TDC、被测域闸门 TDC、时间戳引擎专用 TDC。前两个在闸门上升/下降沿各锁存一次，得到 4 个校正值，消除两侧的 ±1 计数量化误差。
+`eq_counter.v`。闸门由 `clk_fs` 域硬件计数器产生，宽度精确等于 `GATE_LEN`
+个基准时钟周期 —— 不再依赖软件 `usleep`，基准侧因此没有 ±1 量化误差
+（`EQ_STAND` 恒等于 `GATE_LEN`，可作自检）。
 
-有效计数：
+被测侧计数经三级同步器，用 TDC 校正闸门两端的亚周期相位：
 
 ```
-eff_stand = cnt_stand + tdc_ref_rise/64  - tdc_ref_fall/64
-eff_test  = cnt_test  + tdc_test_rise/64 - tdc_test_fall/64
-Fr        = f_s × eff_test / eff_stand
+f_test = f_s × (EQ_TEST + tdc_rise/64 - tdc_fall/64) / EQ_STAND
 ```
 
-### 3. 时间戳引擎
+实测：100 ms 闸门 **0.029 ppm**，恰为 ±1 计数的理论极限。
 
-`timestamp_engine.v` 对被测信号的每个上升沿（或每 `edge_skip+1` 个）记录一条 40 位时间戳：32 位自由运行计数（基准时钟域，3.2 ns 分辨率）+ 6 位 TDC 细值。
+### 3. TDC 亚周期插值
 
-时间戳写入 1024 深度双口 RAM 构成的异步 FIFO，写指针经格雷码两级同步跨到 AXI 时钟域，由 ARM 通过寄存器逐条读出。禁用引擎不清空 FIFO，便于测量结束后读取。
+`tdc.v` 用 CARRY4 进位延迟链，采样后统计温度计码中 1 的个数
+（popcount，天然免疫气泡码；优先编码器会锁到气泡上）。
 
-软件侧对时间戳序列做**线性回归**求斜率（秒/边沿），频率 = `(edge_skip+1) / slope`。相比只用首尾两点，回归利用全部样本抑制随机抖动。
+**实测有效分辨率约 133 ps/抽头，一个基准周期只跨约 24 抽头**，
+而非标称的 50 ps × 64。因此测 350 MHz 时延迟链盖不满一个被测周期，
+`tdc_rise` 90% 以上饱和，校正退化成固定偏置 —— 等精度路径的 TDC 校正
+当前默认关闭（`TDC_CORRECTION_ENABLED = 0`）。
+
+推导过程与数据见 [interface_spec.md 第 7 节](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
 
 ### 模式选择
 
-`ReadFr()` 按参考频率 `FREF` 分流（`freq_counter.c:225`）：
+`ReadFr()` 按参考频率 `FREF` 分流：
 
 ```
-safe_limit = (f_s / 2) × 0.9 = 140.625 MHz    // 奈奎斯特的 90%
-FREF >  safe_limit  →  ReadFr_TDC()            等精度法 + TDC 校正
-FREF <= safe_limit  →  ReadFr_TimestampMode()  时间戳法 + 线性回归
+safe_limit = (f_s / 2) × 0.9 = 140.625 MHz     // 奈奎斯特的 90%
+FREF >  safe_limit  →  ReadFr_EqualPrecision()  等精度 + 硬件闸门
+FREF <= safe_limit  →  ReadFr_TimestampMode()   时间戳 + DMA + 最小二乘
 ```
 
-时间戳法精度更高，但被测信号需在基准时钟域可采样，故高频段退回等精度法。
+时间戳法在 1/122 的时间里拿到好 14 倍的精度，但被测信号必须在基准时钟域
+可采样，故高频段退回等精度法。
 
-时间戳法会自适应设置 `edge_skip`，目标是让 FIFO 中约有 500 条记录；若仍接近写满（≥1020 条），自动加倍 `edge_skip` 重测一次。
+时间戳法自适应设置 `edge_skip`：预计边沿数超过缓冲区容量时按比例抽稀，
+使采集能在闸门时间内填满缓冲区。
 
 ## 基准时钟校准
 
@@ -147,30 +182,33 @@ SD 卡缺失或解析失败时回退到理想值。
 
 ## 寄存器映射
 
-### Counter — 基地址 0x43C10000
+### Counter_Core — 基地址 0x43C10000
 
-| 寄存器 | 偏移 | 访问 | 功能 |
-|--------|------|------|------|
-| REG5 | 0x14 | R/W | 闸门最大计数值 — **HDL 未使用**，见「已知问题」 |
-| REG6 | 0x18 | R/W | 闸门低阈值 — **HDL 未使用** |
-| REG7 | 0x1C | R/W | 基准时钟频率 — **HDL 未使用** |
-| REG13 | 0x34 | R/W | bit0 = `reset_sig`，复位测频逻辑（高有效） |
-| REG14 | 0x38 | R/W | bit0 = `gate_sig`，闸门开关 |
-| REG16 | 0x40 | R | `cnt_clk_stand_reg` 基准时钟计数值 |
-| REG17 | 0x44 | R | `cnt_clk_test_reg` 被测信号计数值 |
-| REG18 | 0x48 | R/W | 通用寄存器，未接硬件，当前无用途 |
-| REG19 | 0x4C | R | `tdc_ref_rise` 基准域闸门上升沿 TDC (0~63) |
-| REG20 | 0x50 | R | `tdc_ref_fall` 基准域闸门下降沿 TDC |
-| REG21 | 0x54 | R | `tdc_test_rise` 被测域闸门上升沿 TDC |
-| REG22 | 0x58 | R | `tdc_test_fall` 被测域闸门下降沿 TDC |
-| REG23 | 0x5C | R/W | 时间戳引擎控制：bit0 = 使能，bit1 = 复位 |
-| REG24 | 0x60 | R/W | `edge_skip`，每 N+1 个边沿采一次 |
-| REG25 | 0x64 | R | FIFO 状态：bit[10:0] = 条目数，bit11 = 满标志 |
-| REG26 | 0x68 | R/W | FIFO 读地址 [9:0] |
-| REG27 | 0x6C | R | FIFO 读数据：32 位粗计数 |
-| REG28 | 0x70 | R | FIFO 读数据：6 位 TDC 细值 |
+| 偏移 | 名称 | 访问 | 功能 |
+|------|------|------|------|
+| 0x00 | `CTRL` | R/W | bit0 `TS_EN` / bit1 `TS_RST` / bit2 `EQ_START`（上升沿触发）/ bit3 `SOFT_RST` |
+| 0x04 | `STATUS` | R | bit0 运行中 / bit1 溢出（粘滞）/ bit2 等精度完成 / bit3 闸门开启 / bit4 FIFO 空 |
+| 0x08 | `EDGE_SKIP` | R/W | 每 N+1 个边沿采一条，0 = 每个都采 |
+| 0x0C | `TS_COUNT` | R | 已写入 FIFO 的时间戳总数 |
+| 0x10 | `LOST_COUNT` | R | 因 FIFO 满丢弃的边沿数，gap-free 成立时恒为 0 |
+| 0x14 | `GATE_LEN` | R/W | 闸门长度，单位 `clk_fs` 周期（硬件定时器预置值） |
+| 0x18 | `EQ_STAND` | R | 等精度基准计数，正常恒等于 `GATE_LEN` |
+| 0x1C | `EQ_TEST` | R | 等精度被测计数 |
+| 0x20 | `TDC_GATE` | R | [7:0] 闸门上升沿相位，[15:8] 下降沿相位 |
+| 0x24 | `FIFO_LEVEL` | R | FIFO 中未取走的条目数 |
+| 0x28 | `VERSION` | R | 魔数 `0x43430100` |
+| 0x2C | `TS_PKT_LEN` | R/W | M_AXIS 包长（拍）。**必须等于 DMA buffer 条数，填 0 会导致传输永不结束** |
 
-未列出的寄存器为 AXI 模板生成的通用读写寄存器，未连接任何硬件。
+时间戳格式（64 位，DMA 写入 DDR）：
+
+```
+[63:32] coarse   clk_fs 域粗计数        [25]   ovf     此条之前发生过丢失
+[31:26] tdc      TDC 相位 0~63          [24]   tdc_ok  细值有效
+                                        [23:0] seq     条目序号
+```
+
+完整定义与实测标定见
+[interface_spec.md](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
 
 ### Counter_Sig — 基地址 0x43C00000
 
@@ -217,7 +255,18 @@ vivado top_cymometer.xpr
 1. Generate Bitstream
 2. File → Export → Export Hardware（勾选 include bitstream）
 
-修改 `ip_repo/` 下的 IP 源码后，需要在 IP Catalog 中刷新并升级 BD 中的 IP 实例，再重新综合。
+修改 `ip_repo/Counter_Core/` 下的 RTL 后，重新打包并更新 BD：
+
+```bash
+vivado -mode tcl -source ip_repo/Counter_Core/Counter_Core_1.0/package_ip.tcl
+```
+
+随后在主工程中 Refresh IP Catalog → 对 BD 中的实例做 Upgrade IP →
+Validate Design（让 M_AXIS 的 64 位宽度传播到 `axis_data_fifo_0` 与
+`axi_dma_0`，这两处的 Stream Data Width 是自动参数，不能手改）→ 重新综合实现。
+
+> 注意 IP 加入 BD 后会在 `.srcs` 下生成 `ipshared` 副本，综合读的是副本；
+> 只改 `ip_repo/` 而不做 Upgrade 等于没改。
 
 ### SDK
 
@@ -234,9 +283,15 @@ vivado top_cymometer.xpr
 CounterCode/
 ├── top_cymometer.xpr              Vivado 工程
 ├── ip_repo/
-│   ├── Counter/Counter_1.0/       测频 IP
-│   ├── Counter_Sig/Counter_Sig_1.0/   控制信号 IP
-│   └── top_cymometer_ip_1.6/      旧版 IP（已弃用）
+│   ├── Counter_Core/Counter_Core_1.0/   测频 IP（当前使用）
+│   │   ├── hdl/                         AXI 接口层（顶层 / S_AXI / M_AXIS）
+│   │   ├── src/                         测量核心（counter_core / ts_engine / eq_counter / tdc / cdc）
+│   │   ├── sim/tb_counter_core.v        testbench
+│   │   ├── doc/interface_spec.md        接口规范 + 实测标定
+│   │   └── package_ip.tcl               重新打包脚本
+│   ├── Counter_Sig/Counter_Sig_1.0/     控制信号 IP
+│   ├── Counter/Counter_1.0/             上一版测频 IP（已弃用）
+│   └── top_cymometer_ip_1.6/            更早版本（已弃用）
 ├── top_cymometer.srcs/
 │   ├── constrs_1/new/top_cymometer.xdc    管脚与时序约束
 │   ├── sim_1/new/tb_top_cymometer.v       测试平台
@@ -254,45 +309,93 @@ CounterCode/
 ## 已知问题与未完成项
 
 以下为代码现状与设计意图的偏差，记录于此供后续处理。
+迁移到 `Counter_Core` 后已解决的条目见本节末尾。
 
-### 1. 闸门参数寄存器未接入硬件
+### 1. TDC 延迟链量程不足
 
-`SetGate()` 计算并写入 REG5 (`cntgatemax`)、REG6 (`cntgatelow`)、`SetClkFsFreq()` 写入 REG7，但这三个寄存器在 `Counter_v1_0_S_AXI.v` 中只有自读自写，从未连接到 `top_cymometer`。闸门时长实际完全由软件 `usleep(GATE_TIME × 1000)` 决定，硬件不参与定时。这意味着闸门精度受 FreeRTOS 调度和中断延迟影响。
+实测有效分辨率约 **133 ps/抽头**，一个基准周期只跨约 24 抽头，
+延迟链总跨度约 1.9 ns。测 350 MHz（周期 2.86 ns）时盖不满一个被测周期，
+`tdc_test_rise` 90% 以上饱和在 63，等精度的 TDC 校正退化成 +0.83 周期的
+固定偏置（100 ms 闸门上表现为恒定 +9.4 Hz）。
 
-### 2. `INIT` 命令为无超时的忙等待
+故驱动中 `TDC_CORRECTION_ENABLED` 默认为 0。要启用需先加大 `tdc.v` 的
+`NUM_TAPS`（同时加宽 `tdc_value` 与时间戳打包格式），再做码密度直方图标定。
 
-寄存器读错的问题已修复：`InitStartT()` 现通过 `ReadSTARTT()` 读取 Counter_Sig 的 REG2（此前误读 Counter 的 REG18，一个未连接硬件的空寄存器，导致循环条件永不成立）。
+时间戳路径不受影响 —— 5 MHz 下 `tdc_ok` 为 4096/4096，细值全程有效。
 
-但 `while(1)` 等待 `CTR_START_T` 变为 1 的结构保留，既无超时也无 sleep。若外部触发信号始终不来，该命令仍会占满 CPU 并阻塞所在的 TCP 连接直到设备复位。`READ:TIME?` 轮询 `START_T_END` 的循环同理。
+### 2. 引擎不得在 DMA 未 armed 时开启
 
-### 3. 部分命令无响应
+拉高 `CTRL.TS_EN` 却没有启动 DMA 传输，时间戳会流进 `axis_data_fifo`
+（实测可存约 4700 条）。`CTRL.TS_RST` 只能复位 IP 内部 FIFO，**够不到
+下游缓冲**，之后每次采集都会先搬走这批陈货。
 
-TCP 路径下 `*RST`、`*OPC?`、`CONF:FREQ <值>`、`FREQ:GATE:TIME <值>`、`START:GATE:TIME <值>`、`PPM <值>`、`INIT` 执行后不向客户端写回任何数据。上位机若按「每条命令必有响应」的假设实现会超时。
+难点在于陈货无法从数据层面识别：`TS_RST` 把 `seq` 与 `free_run_cnt` 都归零，
+于是新旧数据同构 —— 序号连续、`delta` 严格 62/63、`tdc_ok` 满分，
+毒值填充也被完整覆盖。唯一能发现的是 `TS_COUNT` 与实际条数对不上。
 
-### 4. UART 接口未接入
+硬件侧已加 `stream_en` + `pkt_limit` 双重门控，保证一次采集只发一个包、
+其后数据留在内部 FIFO 等 `TS_RST` 清除。但这只防新增，清不掉已有存货。
 
-见「通信接口」一节。此外 `uart_data_process()` 中多处使用未初始化的 `char *Freq` 指针并向其写入（`uart.c:144`、`:150`、`:158`），一旦启用会立即引发未定义行为。
+详见 [interface_spec.md 第 7.3 节](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
 
-### 5. clk_fs / clk_fx 缺少时序约束
+### 3. clk_fs / clk_fx 缺少时序约束
 
-`top_cymometer.xdc` 中没有对 `clk_fs_p` / `clk_fx_p` 的 `create_clock` 约束。实现后的 `check_timing` 报告显示 270 个寄存器引脚由 `clk_fs_p` 驱动、119 个由 `clk_fx_p` 驱动但**无时钟定义**，即 TDC、计数器、时间戳引擎的绝大部分逻辑未被时序分析覆盖。时序报告中 WNS 0.353 ns 的结论仅对已约束的 AXI 逻辑成立。
+`top_cymometer.xdc` 中没有对 `clk_fs_p` / `clk_fx_p` 的 `create_clock` 约束。
+实现后的 `check_timing` 报告显示 270 个寄存器引脚由 `clk_fs_p` 驱动、
+119 个由 `clk_fx_p` 驱动但**无时钟定义**，即 TDC、计数器、时间戳引擎的
+绝大部分逻辑未被时序分析覆盖。
 
-同时该文件仍保留对 `sys_clk` / `sys_rst_n` 的约束，而顶层 `ps_wrapper` 并无这两个端口。
+第 2 条那个 bug 恰好落在已约束的 `aclk` 域内还能被发现；跨域路径目前
+完全是黑的，可能还有同类问题潜伏。补约束后应重跑 `report_timing_summary`。
 
-### 6. DMA 通路已连通但两端未实现
+同时该文件仍保留对 `sys_clk` / `sys_rst_n` 的约束，而顶层 `ps_wrapper`
+并无这两个端口。
 
-`Counter/M_AXIS → axis_data_fifo_0 → axi_dma_0 → axi_smc → PS HP0 → DDR` 的硬件链路完整，但：
+### 4. DMA 仍是 simple mode
 
-- `Counter_v1_0_M_AXIS.v` 仍是 Xilinx 模板代码，发送 8 个递增的假数据，未接 `timestamp_engine` 的 FIFO 输出
-- FreqCounterOS 中没有任何 `XAxiDma` 相关代码
+每次传输结束都需要 CPU 重新配置，两次传输之间存在 20~100 μs 的空档，
+期间产生的边沿会丢失。当前用法（单次采满缓冲区即停）不受影响，
+但要做真正不间断的长序列采集必须上 Scatter-Gather 描述符环。
 
-时间戳目前靠 AXI-Lite 逐条轮询读出，受 1024 深度 FIFO 和单次读取开销限制。DMA 通路应是为突破该瓶颈预留。
+配套观察：`axis_data_fifo_0` 实测只能吸收约 4 条数据（应为默认的分布式
+RAM 浅深度配置），几乎不提供缓冲，建议改 BRAM 模式并加深。
+
+### 5. 部分命令无响应
+
+TCP 路径下 `*RST`、`*OPC?`、`CONF:FREQ <值>`、`FREQ:GATE:TIME <值>`、
+`START:GATE:TIME <值>`、`PPM <值>`、`INIT` 执行后不向客户端写回任何数据。
+上位机若按「每条命令必有响应」的假设实现会超时。
+
+### 6. UART 接口未接入
+
+见「通信接口」一节。此外 `uart_data_process()` 中多处使用未初始化的
+`char *Freq` 指针并向其写入（`uart.c:144`、`:150`、`:158`），
+一旦启用会立即引发未定义行为。
 
 ### 7. 其他
 
-- `timestamp_engine.v` 文件头注释写 `s_axi_aclk (50MHz)`，实际 FCLK_CLK0 为 100 MHz（端口注释正确）
-- `Counter_v1_0_S_AXI.v:1403` 的 FIFO 状态拼接 `{21'b0, ts_fifo_full, ts_fifo_count}` 共 33 位，赋给 32 位时最高位被截断。功能不受影响（软件只取低位）
-- `FreqCounterOS/src/` 下部分 C 源文件的中文注释存在编码损坏（GBK 与 UTF-8 混编导致的乱码）。`freq_counter.c` / `freq_counter.h` 的注释已全部改为英文，其余文件（`uart.c`、`freertos_tcp_perf_server.c`）未处理
+- `init_freqcounter()` 中目前包含自检、状态转储与 `TimestampTest`，
+  属于上电调试代码。信号缺失时会撞满 2 秒超时并阻塞 TCP 任务
+  （Xilinx 的 `usleep` 是忙等，不让出 CPU），产品构建应移除或用宏关闭
+- `FreqCounterOS/src/` 下部分 C 源文件的中文注释存在编码损坏
+  （GBK 与 UTF-8 混编导致的乱码）。`freq_counter_core/` 与 `freq_counter/`
+  的注释已全部改为英文，其余文件（`uart.c`、`freertos_tcp_perf_server.c`）未处理
+- `ip_repo/Counter_Core/` 下的 RTL **未经编译或仿真验证**，功能结论均来自
+  上板实测。`sim/tb_counter_core.v` 可在 Vivado xsim 中运行，但 CARRY4 在
+  功能仿真中延迟为 0，TDC 部分覆盖不到
+
+### 已解决（迁移到 Counter_Core 时）
+
+| 原问题 | 处理 |
+|--------|------|
+| 闸门参数寄存器未接硬件，闸门靠 `usleep` | `GATE_LEN` 接入硬件计数器，`EQ_STAND` 恒等于 `GATE_LEN` |
+| `INIT` 无超时忙等 | `InitStartT()` 加 10 s 触发等待上限，等精度轮询加超时 |
+| DMA 通路两端未实现 | M_AXIS 接真实时间戳流，软件走 `XAxiDma` simple mode |
+| 时间戳靠 AXI-Lite 逐条轮询 | 改 DMA 直入 DDR，4096 条 819 μs |
+| 边沿检测方向与命名相反 | 修正为上升沿 |
+| TDC 接同步器输出，测不到相位 | 改接原始异步信号 |
+| 粗计数与 TDC 不在同一流水级 | 逐拍对齐，实测 `delta` 62/63 交替验证 |
+| FIFO 状态拼接 33 位赋给 32 位被截断 | 状态位拆到 `STATUS` / `FIFO_LEVEL` 两个寄存器 |
 
 ## 开发者信息
 

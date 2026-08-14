@@ -1,0 +1,343 @@
+# Counter_Core v1.0 接口规范
+
+对标 Keysight 53230A 的 **gap-free 连续时间戳** 测量模型。
+
+与 `Counter` v1.0 的根本区别：测量时序由硬件产生，时间戳经 AXI-Stream/DMA 连续流出，
+软件不再用 `usleep` 摆闸门、也不再逐条轮询 FIFO。
+
+---
+
+## 1. 测量模型
+
+```
+                  ┌─────────────────────────────────────────┐
+   clk_fx ───────►│ ts_engine   边沿捕获 + 粗计数 + TDC 细值 │
+                  │             ↓                            │
+   clk_fs ───────►│           异步 FIFO (可配深度)           │
+                  │             ↓                            │
+                  └─────────────┬───────────────────────────┘
+                                │ 64-bit AXI-Stream (连续)
+                                ▼
+                   axis_data_fifo → axi_dma S2MM → HP0 → DDR
+```
+
+软件只做三件事：准备 DMA 缓冲 → 写 `CTRL.TS_EN` 启动 → 从 DDR 取走时间戳做回归。
+采集期间 CPU 不参与搬运。
+
+等精度计数（`eq_counter`）作为**高频退路**保留：被测频率超过基准时钟奈奎斯特
+（>140 MHz）时无法逐边沿打时间戳，退回等精度法 + TDC 校正。其闸门由硬件定时器产生。
+
+---
+
+## 2. 时间戳格式（64 位，小端写入 DDR）
+
+| 位域 | 宽度 | 名称 | 说明 |
+|------|------|------|------|
+| [63:32] | 32 | `coarse` | `clk_fs` 域自由计数，1 LSB = 1/f_s（3.2 ns @312.5 MHz），13.7 s 绕回 |
+| [31:26] | 6 | `tdc` | TDC 细值 0~63，亚周期插值 |
+| [25] | 1 | `ovf` | 溢出标记：**本条之前**发生过丢失，序号不连续 |
+| [24] | 1 | `tdc_ok` | TDC 细值有效。为 0 表示该 `clk_fs` 周期内延迟链未捕获到跳变，细值不可信，回归时应剔除该点 |
+| [23:0] | 24 | `seq` | 条目序号，每条 +1，1677 万条绕回 |
+
+软件还原时刻：
+
+```c
+double t = ((double)coarse + (double)tdc / 64.0) / f_s;
+```
+
+`seq` 用于校验连续性 —— gap-free 的语义是"要么一条不丢，要么明确告诉你哪里丢了"。
+`ovf` 置位或 `seq` 跳变即表示该点之前存在间隙，回归时应在此处断开分段。
+
+> 一条 64 位固定对齐 8 字节，HP0 为 64 位口，无需 upsizer。
+> 因此 `C_M_AXIS_TDATA_WIDTH` 从模板的 32 改为 **64**，BD 中 `axis_data_fifo_0`
+> 与 `axi_dma_0` 的 stream 宽度需同步改为 64。
+
+---
+
+## 3. 寄存器映射
+
+基地址偏移，全部 32 位。地址空间 256 字节（`C_S_AXI_ADDR_WIDTH = 8`）。
+
+| 偏移 | 名称 | 访问 | 说明 |
+|------|------|------|------|
+| 0x00 | `CTRL` | R/W | 控制位，见 3.1 |
+| 0x04 | `STATUS` | R | 状态位，见 3.2 |
+| 0x08 | `EDGE_SKIP` | R/W | 每 `N+1` 个边沿采一条。0 = 每个边沿都采 |
+| 0x0C | `TS_COUNT` | R | 已成功写入 FIFO 的时间戳总数 |
+| 0x10 | `LOST_COUNT` | R | 因 FIFO 满而丢弃的边沿数。gap-free 成立时应恒为 0 |
+| 0x14 | `GATE_LEN` | R/W | 等精度模式闸门长度，单位 `clk_fs` 周期。0 = 不自动关闸 |
+| 0x18 | `EQ_STAND` | R | 等精度：闸门内基准时钟计数 |
+| 0x1C | `EQ_TEST` | R | 等精度：闸门内被测信号计数 |
+| 0x20 | `TDC_GATE` | R | 四个闸门 TDC 值打包，见 3.3 |
+| 0x24 | `FIFO_LEVEL` | R | 当前 FIFO 中未取走的条目数（调试用） |
+| 0x28 | `VERSION` | R | 魔数 `0x43430100` = "CC" + v1.00 |
+| 0x2C | `TS_PKT_LEN` | R/W | M_AXIS 包长（拍）。每 N 拍产生一个 TLAST。0 = 不产生 TLAST，**simple mode 下会导致 DMA 永不结束**，见下方说明 |
+
+> **`TS_PKT_LEN` 必须设成 DMA buffer 的条数，不能填 0。**
+>
+> axi_dma 的 S2MM 通道靠 `TLAST` 界定一次传输的结束，"收满 buffer length"
+> 本身不构成结束条件。填 0 时通道会一直停在 busy 状态，`XAxiDma_Busy()`
+> 永不返回 false，表现为超时 —— 尽管数据其实已经写进 DDR 了。
+>
+> 实测现象：2 秒超时窗口内 `TS_COUNT + LOST_COUNT` 与被测频率完全吻合
+> （边沿一个没丢），但 `XAxiDma_Busy()` 始终为真。填 `TS_PKT_LEN = entries`
+> 后 TLAST 正好落在缓冲区最后一个字上，传输正常结束。
+>
+> 0 这个取值保留给 SG 模式的连续环形传输场景，simple mode 不适用。
+
+未列出地址读作 0，写忽略。
+
+### 3.1 CTRL (0x00)
+
+| 位 | 名称 | 说明 |
+|----|------|------|
+| 0 | `TS_EN` | 1 = 时间戳引擎持续采集并向 M_AXIS 输出 |
+| 1 | `TS_RST` | 1 = 复位引擎（清 FIFO、计数、序号、溢出标志）。电平有效，需自行拉低 |
+| 2 | `EQ_START` | 上升沿触发一次等精度测量，硬件按 `GATE_LEN` 自动开关闸门 |
+| 3 | `SOFT_RST` | 1 = 复位整个测量核心 |
+| 31:4 | — | 保留 |
+
+### 3.2 STATUS (0x04)
+
+| 位 | 名称 | 说明 |
+|----|------|------|
+| 0 | `TS_RUNNING` | 时间戳引擎正在采集 |
+| 1 | `OVERFLOW` | **粘滞**溢出标志，发生过丢失即置位，由 `TS_RST` 清除 |
+| 2 | `EQ_DONE` | 等精度测量完成，`EQ_STAND`/`EQ_TEST`/`TDC_GATE` 已就绪 |
+| 3 | `EQ_BUSY` | 等精度闸门开启中 |
+| 4 | `FIFO_EMPTY` | 时间戳 FIFO 为空 |
+| 31:5 | — | 保留 |
+
+### 3.3 TDC_GATE (0x20)
+
+一次读取取回闸门 TDC 校正值，省若干次 AXI 事务：
+
+| 位域 | 内容 |
+|------|------|
+| [7:0] | `tdc_test_rise` — 被测域闸门上升沿相位 |
+| [15:8] | `tdc_test_fall` — 被测域闸门下降沿相位 |
+| [31:16] | 读作 0 |
+
+**为什么没有基准域的两个值。** 闸门现在由 `clk_fs` 域的硬件计数器产生，
+与基准时钟严格同步，闸门宽度精确等于 `GATE_LEN` 个 `clk_fs` 周期，
+基准侧不存在 ±1 量化误差，也就无需 TDC 校正。原 IP 的
+`tdc_ref_rise/fall` 在新架构下失去意义，已删除对应硬件。
+
+> 原 IP 的四个 TDC 值实际上都是无效的：它把 TDC 的 `signal_in` 接在
+> 同步器输出 `gate_sync_*[2]` 上，该信号跳变严格对齐时钟沿，
+> TDC 只能测到时钟到 FF 的固定布线延迟，不含闸门相位信息。
+> 新设计把 TDC 接到原始异步 `gate` 上才取到真实相位。
+
+软件计算：
+
+```
+f_test = f_s × (EQ_TEST + tdc_test_rise/64 - tdc_test_fall/64) / EQ_STAND
+```
+
+---
+
+## 4. 软件使用流程
+
+### 4.1 时间戳模式（主路径，f_x ≤ 100 MHz）
+
+```c
+// 1. 准备 DMA 接收缓冲（cache 一致性见下方注意）
+XAxiDma_SimpleTransfer(&dma, (UINTPTR)buf, len, XAXIDMA_DEVICE_TO_DMA);
+
+// 2. 复位并配置引擎
+WriteReg(CTRL, CTRL_TS_RST);
+WriteReg(EDGE_SKIP, skip);
+WriteReg(CTRL, 0);
+
+// 3. 启动采集 —— 硬件持续产流，CPU 空闲
+WriteReg(CTRL, CTRL_TS_EN);
+
+// 4. 等 DMA 完成中断（或轮询），期间可做别的事
+
+// 5. 停采
+WriteReg(CTRL, 0);
+
+// 6. 取数前必须失效 cache，HP0 不经 ACP
+Xil_DCacheInvalidateRange((UINTPTR)buf, len);
+
+// 7. 校验连续性后做最小二乘回归
+if (ReadReg(STATUS) & STATUS_OVERFLOW) { /* 存在间隙，分段处理 */ }
+```
+
+### 4.2 等精度模式（退路，f_x > 140 MHz）
+
+```c
+WriteReg(GATE_LEN, (u32)(f_s * gate_sec));   // 硬件定时，不再 usleep
+WriteReg(CTRL, CTRL_EQ_START);
+while (!(ReadReg(STATUS) & STATUS_EQ_DONE)) ;
+u32 stand = ReadReg(EQ_STAND), test = ReadReg(EQ_TEST);
+u32 tdc = ReadReg(TDC_GATE);
+```
+
+`CTRL.EQ_START` 是**上升沿触发**（硬件 `eq_go = eq_start & ~eq_start_d`），
+写 1 之后必须写回 0，否则第二次测量不会启动。
+
+### 4.3 等待 DMA 完成：不要用 `XAxiDma_Busy()`
+
+```c
+/* 错误：Busy() 查 IDLE 位，缓冲填满瞬间软件停不掉引擎，
+   多余数据砸向已完成的通道 -> DMAIntErr -> halted，
+   而 halted 的通道永远不置 IDLE，于是死等到超时 */
+while (XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA)) { ... }
+
+/* 正确：IOC 在完成时锁存，且能挺过随后的错误 */
+while (!(XAxiDma_ReadReg(base, XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET)
+         & XAXIDMA_IRQ_IOC_MASK)) { ... }
+WriteReg(CTRL, 0);                       /* 立刻停采 */
+/* 清中断锁存位；若 halted 则 reset 通道，为下次采集备好 */
+```
+
+尾部的 `DMAIntErr` 是"缓冲已满但引擎还在推"的必然副作用，
+不影响已落盘的数据。传输前也要清一次状态位，否则上次遗留的 IOC
+会让本次瞬间"完成"。
+
+---
+
+## 5. 性能边界
+
+gap-free 不是无条件成立的，上限由三处决定：
+
+| 限制 | 数值 | 后果 |
+|------|------|------|
+| `clk_fs` 域每周期最多产 1 条 | 312.5 M 条/s | 硬上限 |
+| HP0 带宽（64bit @150MHz，留余量） | ~800 MB/s ÷ 8 B = 1e8 条/s | 超出则 FIFO 积压 |
+| 被测信号需在 `clk_fs` 域可采样 | f_x < f_s/2 = 156 MHz | 超出必须走等精度模式 |
+
+**实用结论**：f_x ≤ 100 MHz 且 `EDGE_SKIP = 0` 时可真 gap-free；
+更高频率需设置 `EDGE_SKIP` 降低产出速率，此时不再是严格 gap-free，
+但 `seq` 仍然连续（跳过的边沿不计入序号）。
+
+`LOST_COUNT` 与 `STATUS.OVERFLOW` 是判据：只要它们为 0，本次采集就是真正无间隙的。
+
+---
+
+## 6. 相对 Counter v1.0 修正的问题
+
+| # | 问题 | 位置 | 处理 |
+|---|------|------|------|
+| 1 | 边沿检测方向与命名相反（实为下降沿） | `timestamp_engine.v:79` | 统一为上升沿，与 TDC 测量边沿一致 |
+| 2 | 锁存的 TDC 值与被检测边沿不在同一流水级 | `timestamp_engine.v:118` | 粗计数与 TDC 对齐到同一采样点 |
+| 3 | `fifo_rd_addr` 被直接当读指针，写指针绕回即失效 | `timestamp_engine.v:173` | 改真 FIFO pop 语义，读指针由硬件维护 |
+| 4 | 异步复位无同步释放，跨域释放沿引亚稳态 | `cymometer.v:38` 等 | 统一经复位同步器 |
+| 5 | `edge_skip` 等多位总线裸跨时钟域 | `cymometer.v:173` | 加载握手，仅在引擎停止时更新 |
+| 6 | 闸门参数寄存器未接硬件，闸门靠 `usleep` | `Counter_v1_0_S_AXI.v` | `GATE_LEN` 接硬件定时器 |
+| 7 | 闸门经两个时钟域各自同步，开启时刻差最多 3 拍 | `cymometer.v` | 闸门单域产生后分发，差值固定可校正 |
+| 8 | TDC 编码器遇气泡码取错位置 | `tdc.v:84` | 改为统计 1 的个数，气泡免疫 |
+| 9 | FIFO 状态拼接 33 位赋给 32 位被截断 | `Counter_v1_0_S_AXI.v:1403` | 状态位重新分配到 `STATUS`/`FIFO_LEVEL` |
+| 10 | M_AXIS 发模板假数据 | `Counter_v1_0_M_AXIS.v` | 接真实时间戳流 |
+
+---
+
+## 7. 实测数据（2026-08-14，xc7z020，5 MHz 被测 / 312.5 MHz 基准）
+
+### 7.1 gap-free 已达成
+
+连续两次采集，结果完全一致：
+
+```
+第一次                          第二次
+TS_COUNT   4516                 TS_COUNT   4516
+FIFO_LEVEL 420                  FIFO_LEVEL 420
+delta mean 62.500               delta mean 62.500
+tdc_ok     4096/4096            tdc_ok     4096/4096
+LOST_COUNT 0, ovf marks 0       LOST_COUNT 0, ovf marks 0
+sequence contiguous, seq 起于 0  sequence contiguous, seq 起于 0
+f (fit)    4999999.988 Hz       f (fit)    4999999.991 Hz
+```
+
+| 指标 | 实测 |
+|------|------|
+| 连续时间戳 | 4096 条无间隙 |
+| 采集耗时 | ≈ 819 μs |
+| 频率误差 | **0.002 ppm** |
+
+对照等精度模式：100 ms 闸门得到 0.029 ppm。
+**时间戳法用 1/122 的时间，拿到好 14 倍的精度** —— 这是换成 53230A 模型的全部意义。
+
+三个数字互相印证：
+
+- `TS_COUNT − 4096 = 420 = FIFO_LEVEL`，即采够 4096 条后 `pop_cnt` 触顶停止
+  弹出，其后产生的 420 条留在 FIFO 内、没有外溢到下游
+- 420 条 = 84 μs，正落在 100 μs 轮询间隔内
+- 两次 `coarse` 起点不同（54294 / 58042），确认是两批新数据而非同一份
+
+`delta` 在 62 与 63 之间严格交替、均值恰为 62.5（= 312.5/5），是粗计数与
+边沿检测流水线对齐正确的硬证据；若对齐错一拍，这个均值会明显偏离。
+
+### 7.2 TDC 实际分辨率约 133 ps/tap，不是标称的 50 ps
+
+时间戳明细里 `delta` 与 `tdc` 同步交替：
+
+```
+delta:  63  62  63  62 ...
+tdc:    28  40  28  40 ...
+```
+
+相邻边沿相位推进 0.5 个 `clk_fs` 周期，而 TDC 读数只差 12 个抽头：
+
+```
+0.5 × 3.2 ns = 1.6 ns = 12 taps   ->   约 133 ps/tap
+```
+
+即一个 `clk_fs` 周期只跨 **约 24 个抽头**，与实测 `tdc` 取值范围 27~52
+（跨度 25）吻合。64 抽头的标称满量程并不成立。
+
+旁证：等精度模式下 `tdc_fall` 有 80% 落在 4 的倍数上（均匀分布只该有 25%），
+说明同一个 CARRY4 内的四个抽头几乎同时翻转，真正的延迟发生在 CARRY4 之间。
+
+**推论**：延迟链总跨度约 1.9 ns。测 350 MHz（周期 2.86 ns）时盖不满一个
+周期，`tdc_test_rise` 90% 以上饱和在 63，使等精度的 TDC 校正退化成
++0.83 周期的固定偏置，在 100 ms 闸门上表现为恒定 +9.4 Hz 误差。
+故 `TDC_CORRECTION_ENABLED` 当前默认关闭，见驱动头文件。
+
+要重新启用，需先把 `tdc.v` 的 `NUM_TAPS` 加大（同时加宽 `tdc_value`
+与时间戳打包格式），再做码密度直方图标定。
+
+### 7.3 硬性约束：引擎只能在 DMA 已 armed 的前提下开启
+
+**违反这条会污染一块软件清不掉的缓冲区，且现象极难识别。**
+
+调试期曾在 `init_freqcounter()` 里放一段"活性测试"：不启动 DMA，
+只把 `CTRL.TS_EN` 拉高跑 1 ms，靠 `TS_COUNT` 确认引擎在动。它确实证明了
+引擎正常，代价是把约 5000 条时间戳推进了 `axis_data_fifo`。
+
+`CTRL.TS_RST` 只能复位 `ts_engine` 内部的 FIFO，**够不到下游的
+AXI-Stream FIFO 和 DMA 内部缓冲**。于是后续每次采集都先从下游搬走陈货：
+
+```
+1 ms 活性测试   → 4998 条灌入下游（实测该缓冲可存约 4700 条）
+第一次采集      → DMA 收满的 4096 条全是陈货，新数据只产生 505 条
+第二次采集      → 继续搬剩下的 601 条，之后才是新数据 → seq 在 601 处断裂
+```
+
+**为什么难以识别**：`TS_RST` 会把 `seq` 归零、把 `free_run_cnt` 归零，
+所以陈货与新数据在数据层面完全同构 —— `seq` 连续、`delta` 严格 62/63、
+`tdc_ok` 满分、连毒值填充都被完整覆盖（DMA 确实写满了每个格子，
+只是写的是旧内容）。**所有判据全部通过。**
+
+唯一露出破绽的是 `TS_COUNT`（报 504 而非约 4500）—— 而它恰恰被先后错怪了
+三次：先归咎于 TLAST 缺失、再归咎于 `cnt_cdc` 时序违例、又归咎于接线错误。
+它自始至终是对的。
+
+**硬件侧的防护**（已实现）：`ts_engine` 的弹出受 `stream_en` 与 `pkt_limit`
+双重门控 —— `TS_EN` 为低时不弹出，弹够 `pkt_limit` 条也停，直到 `TS_EN`
+落下才重新武装。这保证一次采集只有一个包离开，其后产生的数据留在内部
+FIFO 等待 `TS_RST` 清除（实测 `TS_COUNT − 4096 = FIFO_LEVEL = 420`）。
+
+但这只防未来，**清不掉已经躺在下游的存货**。所以规矩仍然成立：
+开引擎前必须先 arm DMA。
+
+> **附带说明 `cnt_cdc`**：追查此问题期间，`cdc.v` 的格雷码转二进制
+> 从串行涟漪改成了并行 XOR 归约。当时的理由（32 位 31 级链在 100 MHz
+> 下不收敛）**是错的** —— 串行版本一直读得正确。改动本身仍然保留，
+> 因为把 31 级组合链交给布局器毫无必要，但它属于预防性改进，
+> 不是对已观察故障的修复。
+>
+> 同理，`LOST_COUNT == 0` 这个判据没有问题。但真正独立可信的判据
+> 依然是 `TS_COUNT` 与 `FIFO_LEVEL` 的自洽关系，以及毒值填充 ——
+> 单看数据本身的连续性是不够的。

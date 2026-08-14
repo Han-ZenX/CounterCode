@@ -3,7 +3,7 @@
 	"modules": {
 		"ps": {
 			"proto_instances": {
-				"/Counter_0/M_AXIS": {
+				"/Counter_Core_0/M_AXIS": {
 					"interface": "xilinx.com:interface:axis:1.0",
 					"ports": {
 						"ACLK": { "actual": "m_axis_aclk"},
@@ -15,7 +15,7 @@
 						"TVALID": { "actual": "m_axis_tvalid"}
 					}
 				},
-				"/Counter_0/S_AXI": {
+				"/Counter_Core_0/S_AXI": {
 					"interface": "xilinx.com:interface:aximm:1.0",
 					"ports": {
 						"ACLK": { "actual": "s_axi_aclk"},
