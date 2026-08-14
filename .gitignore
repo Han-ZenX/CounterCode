@@ -200,8 +200,6 @@ archive/
 # =====================================================
 # Reference clock calibration data. Device specific - each board has its own
 # measured value, so it should not be shared through the repository.
-FREQ.TXT
-clk_fs_freq.txt
 *.data
 measurement_*.csv
 
