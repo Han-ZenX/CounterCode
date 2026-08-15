@@ -594,6 +594,7 @@ proc create_root_design { parentCell } {
   connect_bd_net -net CTR_START_T_0_1 [get_bd_ports CTR_START_T] [get_bd_pins Counter_Sig_0/CTR_START_T]
   connect_bd_net -net CTR_STATUS0_0_1 [get_bd_ports CTR_STATUS0] [get_bd_pins Counter_Sig_0/CTR_STATUS0]
   connect_bd_net -net CTR_STATUS1_0_1 [get_bd_ports CTR_STATUS1] [get_bd_pins Counter_Sig_0/CTR_STATUS1]
+  connect_bd_net -net Counter_Core_0_stream_aresetn [get_bd_pins Counter_Core_0/stream_aresetn] [get_bd_pins axis_data_fifo_0/s_axis_aresetn]
   connect_bd_net -net Counter_Sig_0_CTR_OCXO [get_bd_ports CTR_OCXO] [get_bd_pins Counter_Sig_0/CTR_OCXO]
   connect_bd_net -net Counter_Sig_0_CTR_PRIREF [get_bd_ports CTR_PRIREF] [get_bd_pins Counter_Sig_0/CTR_PRIREF]
   connect_bd_net -net Counter_Sig_0_CTR_REF_CLOCK [get_bd_ports CTR_REF_CLOCK] [get_bd_pins Counter_Sig_0/CTR_REF_CLOCK]
@@ -604,7 +605,7 @@ proc create_root_design { parentCell } {
   connect_bd_net -net clk_fx_p_0_1 [get_bd_ports clk_fx_p] [get_bd_pins Counter_Core_0/clk_fx_p]
   connect_bd_net -net processing_system7_0_FCLK_CLK0 [get_bd_pins Counter_Core_0/m_axis_aclk] [get_bd_pins Counter_Core_0/s_axi_aclk] [get_bd_pins Counter_Sig_0/s_axi_aclk] [get_bd_pins axi_dma_0/m_axi_s2mm_aclk] [get_bd_pins axi_dma_0/s_axi_lite_aclk] [get_bd_pins axi_smc/aclk] [get_bd_pins axis_data_fifo_0/s_axis_aclk] [get_bd_pins processing_system7_0/FCLK_CLK0] [get_bd_pins processing_system7_0/M_AXI_GP0_ACLK] [get_bd_pins processing_system7_0/S_AXI_HP0_ACLK] [get_bd_pins ps7_0_axi_periph/ACLK] [get_bd_pins ps7_0_axi_periph/M00_ACLK] [get_bd_pins ps7_0_axi_periph/M01_ACLK] [get_bd_pins ps7_0_axi_periph/M02_ACLK] [get_bd_pins ps7_0_axi_periph/S00_ACLK] [get_bd_pins rst_ps7_0_100M/slowest_sync_clk]
   connect_bd_net -net processing_system7_0_FCLK_RESET0_N [get_bd_pins processing_system7_0/FCLK_RESET0_N] [get_bd_pins rst_ps7_0_100M/ext_reset_in]
-  connect_bd_net -net rst_ps7_0_50M_peripheral_aresetn [get_bd_pins Counter_Core_0/m_axis_aresetn] [get_bd_pins Counter_Core_0/s_axi_aresetn] [get_bd_pins Counter_Sig_0/s_axi_aresetn] [get_bd_pins axi_dma_0/axi_resetn] [get_bd_pins axi_smc/aresetn] [get_bd_pins axis_data_fifo_0/s_axis_aresetn] [get_bd_pins ps7_0_axi_periph/ARESETN] [get_bd_pins ps7_0_axi_periph/M00_ARESETN] [get_bd_pins ps7_0_axi_periph/M01_ARESETN] [get_bd_pins ps7_0_axi_periph/M02_ARESETN] [get_bd_pins ps7_0_axi_periph/S00_ARESETN] [get_bd_pins rst_ps7_0_100M/peripheral_aresetn]
+  connect_bd_net -net rst_ps7_0_50M_peripheral_aresetn [get_bd_pins Counter_Core_0/m_axis_aresetn] [get_bd_pins Counter_Core_0/s_axi_aresetn] [get_bd_pins Counter_Sig_0/s_axi_aresetn] [get_bd_pins axi_dma_0/axi_resetn] [get_bd_pins axi_smc/aresetn] [get_bd_pins ps7_0_axi_periph/ARESETN] [get_bd_pins ps7_0_axi_periph/M00_ARESETN] [get_bd_pins ps7_0_axi_periph/M01_ARESETN] [get_bd_pins ps7_0_axi_periph/M02_ARESETN] [get_bd_pins ps7_0_axi_periph/S00_ARESETN] [get_bd_pins rst_ps7_0_100M/peripheral_aresetn]
 
   # Create address segments
   create_bd_addr_seg -range 0x40000000 -offset 0x00000000 [get_bd_addr_spaces axi_dma_0/Data_S2MM] [get_bd_addr_segs processing_system7_0/S_AXI_HP0/HP0_DDR_LOWOCM] SEG_processing_system7_0_HP0_DDR_LOWOCM

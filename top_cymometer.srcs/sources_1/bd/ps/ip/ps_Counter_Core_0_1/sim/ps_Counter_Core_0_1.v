@@ -48,7 +48,7 @@
 
 
 // IP VLNV: xilinx.com:user:Counter_Core:1.0
-// IP Revision: 6
+// IP Revision: 10
 
 `timescale 1ns/1ps
 
@@ -58,6 +58,7 @@ module ps_Counter_Core_0_1 (
   clk_fs_n,
   clk_fx_p,
   clk_fx_n,
+  stream_aresetn,
   m_axis_tdata,
   m_axis_tstrb,
   m_axis_tlast,
@@ -92,6 +93,9 @@ input wire clk_fs_p;
 input wire clk_fs_n;
 input wire clk_fx_p;
 input wire clk_fx_n;
+(* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME stream_aresetn, POLARITY ACTIVE_LOW, INSERT_VIP 0" *)
+(* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 stream_aresetn RST" *)
+output wire stream_aresetn;
 (* X_INTERFACE_INFO = "xilinx.com:interface:axis:1.0 M_AXIS TDATA" *)
 output wire [63 : 0] m_axis_tdata;
 (* X_INTERFACE_INFO = "xilinx.com:interface:axis:1.0 M_AXIS TSTRB" *)
@@ -168,6 +172,7 @@ input wire s_axi_aresetn;
     .clk_fs_n(clk_fs_n),
     .clk_fx_p(clk_fx_p),
     .clk_fx_n(clk_fx_n),
+    .stream_aresetn(stream_aresetn),
     .m_axis_tdata(m_axis_tdata),
     .m_axis_tstrb(m_axis_tstrb),
     .m_axis_tlast(m_axis_tlast),

@@ -117,7 +117,27 @@ foreach {pair pin_p pin_n} {
 }
 
 #-----------------------------------------------------------------------------
-# 5. Generate the GUI, update checksums and save
+# 5. Tag stream_aresetn as a reset interface
+#
+# Without this it packages as a plain output and the BD will not offer it as
+# a reset source. Polarity must be declared too, otherwise Vivado assumes
+# active high and inverts it during connection automation.
+#-----------------------------------------------------------------------------
+if {[llength [ipx::get_ports stream_aresetn -of_objects $core]]} {
+    set rst_if [ipx::add_bus_interface stream_aresetn $core]
+    set_property abstraction_type_vlnv xilinx.com:signal:reset_rtl:1.0 $rst_if
+    set_property bus_type_vlnv         xilinx.com:signal:reset:1.0     $rst_if
+    set_property interface_mode        master                          $rst_if
+
+    set rst_map [ipx::add_port_map RST $rst_if]
+    set_property physical_name stream_aresetn $rst_map
+
+    set_property value ACTIVE_LOW \
+        [ipx::add_bus_parameter POLARITY $rst_if]
+}
+
+#-----------------------------------------------------------------------------
+# 6. Generate the GUI, update checksums and save
 #-----------------------------------------------------------------------------
 ipx::create_xgui_files $core
 ipx::update_checksums  $core
@@ -128,6 +148,8 @@ puts "=========================================================="
 puts " Counter_Core packaged: $ip_root/component.xml"
 puts ""
 puts " Next steps:"
+puts "   0. In the BD, connect Counter_Core_0/stream_aresetn to"
+puts "      axis_data_fifo_0/s_axis_aresetn (replacing the global reset)"
 puts "   1. Main project IP Catalog -> Refresh"
 puts "   2. Upgrade or re-add Counter_Core in the BD"
 puts "   3. Set axis_data_fifo_0 / axi_dma_0 stream width to 64"

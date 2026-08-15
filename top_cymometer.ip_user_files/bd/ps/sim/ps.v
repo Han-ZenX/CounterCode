@@ -1,7 +1,7 @@
 //Copyright 1986-2018 Xilinx, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2018.3 (win64) Build 2405991 Thu Dec  6 23:38:27 MST 2018
-//Date        : Fri Aug 14 22:25:04 2026
+//Date        : Sat Aug 15 10:41:02 2026
 //Host        : DESKTOP-9L351U0 running 64-bit major release  (build 9200)
 //Command     : generate_target ps.bd
 //Design      : ps
@@ -426,7 +426,7 @@ module m02_couplers_imp_Y7CMOD
   assign m02_couplers_to_m02_couplers_WVALID = S_AXI_wvalid;
 endmodule
 
-(* CORE_GENERATION_INFO = "ps,IP_Integrator,{x_ipVendor=xilinx.com,x_ipLibrary=BlockDiagram,x_ipName=ps,x_ipVersion=1.00.a,x_ipLanguage=VERILOG,numBlks=14,numReposBlks=9,numNonXlnxBlks=0,numHierBlks=5,maxHierDepth=0,numSysgenBlks=0,numHlsBlks=0,numHdlrefBlks=0,numPkgbdBlks=0,bdsource=USER,da_axi4_cnt=76,da_board_cnt=1,da_clkrst_cnt=6,da_ps7_cnt=1,synth_mode=OOC_per_IP}" *) (* HW_HANDOFF = "ps.hwdef" *) 
+(* CORE_GENERATION_INFO = "ps,IP_Integrator,{x_ipVendor=xilinx.com,x_ipLibrary=BlockDiagram,x_ipName=ps,x_ipVersion=1.00.a,x_ipLanguage=VERILOG,numBlks=14,numReposBlks=9,numNonXlnxBlks=0,numHierBlks=5,maxHierDepth=0,numSysgenBlks=0,numHlsBlks=0,numHdlrefBlks=0,numPkgbdBlks=0,bdsource=USER,da_axi4_cnt=80,da_board_cnt=1,da_clkrst_cnt=10,da_ps7_cnt=1,synth_mode=OOC_per_IP}" *) (* HW_HANDOFF = "ps.hwdef" *) 
 module ps
    (CTR_OCXO,
     CTR_PRIREF,
@@ -499,6 +499,7 @@ module ps
   wire Counter_Core_0_M_AXIS_TREADY;
   wire [7:0]Counter_Core_0_M_AXIS_TSTRB;
   wire Counter_Core_0_M_AXIS_TVALID;
+  wire Counter_Core_0_stream_aresetn;
   wire Counter_Sig_0_CTR_OCXO;
   wire Counter_Sig_0_CTR_PRIREF;
   wire Counter_Sig_0_CTR_REF_CLOCK;
@@ -704,7 +705,8 @@ module ps
         .s_axi_wdata(ps7_0_axi_periph_M01_AXI_WDATA),
         .s_axi_wready(ps7_0_axi_periph_M01_AXI_WREADY),
         .s_axi_wstrb(ps7_0_axi_periph_M01_AXI_WSTRB),
-        .s_axi_wvalid(ps7_0_axi_periph_M01_AXI_WVALID));
+        .s_axi_wvalid(ps7_0_axi_periph_M01_AXI_WVALID),
+        .stream_aresetn(Counter_Core_0_stream_aresetn));
   ps_Counter_Sig_0_1 Counter_Sig_0
        (.CTR_OCXO(Counter_Sig_0_CTR_OCXO),
         .CTR_PRIREF(Counter_Sig_0_CTR_PRIREF),
@@ -820,7 +822,7 @@ module ps
         .m_axis_tready(axis_data_fifo_0_M_AXIS_TREADY),
         .m_axis_tvalid(axis_data_fifo_0_M_AXIS_TVALID),
         .s_axis_aclk(processing_system7_0_FCLK_CLK0),
-        .s_axis_aresetn(rst_ps7_0_50M_peripheral_aresetn),
+        .s_axis_aresetn(Counter_Core_0_stream_aresetn),
         .s_axis_tdata(Counter_Core_0_M_AXIS_TDATA),
         .s_axis_tlast(Counter_Core_0_M_AXIS_TLAST),
         .s_axis_tready(Counter_Core_0_M_AXIS_TREADY),

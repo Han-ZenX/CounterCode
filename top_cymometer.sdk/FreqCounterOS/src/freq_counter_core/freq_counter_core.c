@@ -262,10 +262,21 @@ int init_freqcounter(void)
     TimestampTest(4096, 0);
     TimestampTest(4096, 0);
 
+
+    /*
     for (int i = 0; i < 5; i++)
         xil_printf("TS_COUNT=%lu\r\n",
                    (unsigned long)COUNTER_CORE_mReadReg(COUNTER_CORE_BASEADDR,
                                                         COUNTER_CORE_TS_COUNT_OFFSET));
+
+    FREF = 99000000;
+    SetGate(100.0);
+    char fs[64];
+    for (int i = 0; i < 10; i++) {
+        int rc = ReadFr_TimestampMode(fs);
+        xil_printf("[%d] rc=%d  f = %s", i, rc, fs);
+    }
+    */
 
     return 0;
 }
@@ -528,40 +539,152 @@ int CaptureTimestamps(u64 *buf, int entries, u32 edge_skip, u32 timeout_ms)
     /* Invalidate again before reading: the DMA wrote DDR behind the cache */
     Xil_DCacheInvalidateRange((UINTPTR)buf, bytes);
 
-    /* The gap-free criterion. Non-zero means edges were dropped and the
-       series has holes in it. */
+    /* Gap-free criterion.
+     *
+     * LOST_COUNT counts every edge dropped during the whole capture window,
+     * including the ones produced after the buffer was already full -- the
+     * engine keeps running until software stops it, and at high input rates
+     * that tail alone can be thousands of edges. Those drops happen after
+     * the data was collected and do not corrupt any of it, so failing the
+     * capture on LOST_COUNT alone rejects perfectly good buffers.
+     *
+     * What matters is whether the delivered buffer has holes inside it.
+     * VerifyContinuity finds those from the coarse increments, which is the
+     * only test that catches dropped edges (seq cannot -- discarded edges
+     * take no sequence number). */
     lost = core_rd(COUNTER_CORE_LOST_COUNT_OFFSET);
-    if (lost != 0) {
-        xil_printf("[TS] lost %lu edges, not gap-free\r\n", (unsigned long)lost);
-        return TS_ERR_OVERFLOW;
+
+    /* Drop a stale leading entry.
+     *
+     * CTRL.TS_RST resets the IP's own FIFO but cannot reach the downstream
+     * AXI-Stream FIFO, whose reset is wired to the global one in the block
+     * design. That buffer can therefore still hold one entry from the
+     * previous capture, and the DMA delivers it first.
+     *
+     * Such an entry is unmistakable: TS_RST zeroes the free running counter,
+     * so anything left from an earlier capture carries a coarse value far
+     * larger than the fresh data that follows -- time appears to run
+     * backwards across the boundary. Measured example: coarse 33618150
+     * (= 107 ms, the previous capture's length) followed by 58121 (= 186 us
+     * into the new one).
+     *
+     * This is a workaround, not a fix. Properly solving it means resetting
+     * the downstream FIFO together with the engine.
+     */
+    if (entries >= 2) {
+        u32 c0 = COUNTER_CORE_TS_COARSE(buf[0]);
+        u32 c1 = COUNTER_CORE_TS_COARSE(buf[1]);
+
+        if (c0 > c1) {
+            xil_printf("[TS] dropped stale leading entry (coarse %lu > %lu)\r\n",
+                       (unsigned long)c0, (unsigned long)c1);
+            memmove(&buf[0], &buf[1], (size_t)(entries - 1) * sizeof(u64));
+            entries--;
+        }
     }
+
+    {
+        int brk = VerifyContinuity(buf, entries);
+
+        if (brk >= 0) {
+            xil_printf("[TS] gap inside buffer at index %d (LOST_COUNT=%lu)\r\n",
+                       brk, (unsigned long)lost);
+
+            /* Characterise the gap: how big is it against the normal spacing?
+               A gap that always lands at index 1 points at the first captured
+               entry rather than at a dropped edge mid-series. */
+            if (brk >= 1 && entries >= 4) {
+                u32 c_prev = COUNTER_CORE_TS_COARSE(buf[brk - 1]);
+                u32 c_here = COUNTER_CORE_TS_COARSE(buf[brk]);
+                u32 c_next = COUNTER_CORE_TS_COARSE(buf[brk + 1]);
+                u32 d_gap  = c_here - c_prev;
+                u32 d_norm = (brk + 1 < entries) ? (c_next - c_here) : 0;
+
+                xil_printf("      coarse %lu -> %lu, gap delta=%lu, next delta=%lu\r\n",
+                           (unsigned long)c_prev, (unsigned long)c_here,
+                           (unsigned long)d_gap, (unsigned long)d_norm);
+                xil_printf("      seq %lu -> %lu, ovf=%lu\r\n",
+                           (unsigned long)COUNTER_CORE_TS_SEQ(buf[brk - 1]),
+                           (unsigned long)COUNTER_CORE_TS_SEQ(buf[brk]),
+                           (unsigned long)COUNTER_CORE_TS_OVF(buf[brk]));
+            }
+
+            return TS_ERR_OVERFLOW;
+        }
+    }
+
+    if (lost != 0)
+        xil_printf("[TS] %lu edges dropped after the buffer filled, data intact\r\n",
+                   (unsigned long)lost);
 
     return entries;
 }
 
 /*===========================================================================
- * Sequence continuity check
+ * Continuity check
  *
- * Returns -1 when contiguous, otherwise the index where the series breaks.
+ * Returns -1 when the series is intact, otherwise the index where it breaks.
+ *
+ * Three independent tests, because no single one covers every failure:
+ *
+ *   ovf flag      the hardware marks the first entry written after a drop.
+ *                 Misses drops that happen once the buffer is already full,
+ *                 since no further entry gets written to carry the mark.
+ *
+ *   seq step      catches a buffer stitched together from two captures.
+ *                 Does NOT catch dropped edges: seq_cnt only advances on a
+ *                 successful write, so discarded edges take no sequence
+ *                 number and a hole leaves seq perfectly contiguous. This
+ *                 was the blind spot that let a series missing ~1600 edges
+ *                 pass as "contiguous" while the regression silently
+ *                 returned 83.9 MHz for a 99 MHz input.
+ *
+ *   coarse step   the one that actually finds dropped edges. A hole shows up
+ *                 as a coarse increment several times the normal spacing.
  *=========================================================================*/
 int VerifyContinuity(const u64 *buf, int count)
 {
     int i;
-    u32 prev;
+    u32 prev_seq;
+    u32 min_delta = 0xFFFFFFFFu;
+    u32 threshold;
 
     if (buf == NULL || count < 2) return -1;
 
-    prev = COUNTER_CORE_TS_SEQ(buf[0]);
+    /* Pass 1: smallest coarse increment in the series.
+     *
+     * Dropping edges can only make an increment larger, never smaller, so the
+     * minimum is a robust estimate of the true spacing even when the series
+     * already has holes -- no need to know f_x or edge_skip beforehand. */
+    for (i = 1; i < count; i++) {
+        u32 d = COUNTER_CORE_TS_COARSE(buf[i])
+              - COUNTER_CORE_TS_COARSE(buf[i - 1]);
+        if (d < min_delta)
+            min_delta = d;
+    }
+
+    /* Normal spacing jitters by one coarse tick (e.g. 62/63 at 5 MHz), so
+     * twice the minimum plus slack sits well clear of legitimate variation
+     * while any real gap is a multiple of the spacing. */
+    threshold = min_delta * 2u + 2u;
+
+    prev_seq = COUNTER_CORE_TS_SEQ(buf[0]);
 
     for (i = 1; i < count; i++) {
         u32 s = COUNTER_CORE_TS_SEQ(buf[i]);
+        u32 d = COUNTER_CORE_TS_COARSE(buf[i])
+              - COUNTER_CORE_TS_COARSE(buf[i - 1]);
 
         if (COUNTER_CORE_TS_OVF(buf[i]))
             return i;
-        if (s != ((prev + 1u) & 0xFFFFFFu))
+
+        if (s != ((prev_seq + 1u) & 0xFFFFFFu))
             return i;
 
-        prev = s;
+        if (d > threshold)
+            return i;
+
+        prev_seq = s;
     }
 
     return -1;
@@ -1075,7 +1198,7 @@ static const char *ts_err_text(int rc)
     switch (rc) {
     case TS_ERR_DMA_START: return "DMA refused the transfer";
     case TS_ERR_TIMEOUT:   return "timeout: buffer never filled";
-    case TS_ERR_OVERFLOW:  return "overflow: edges were dropped";
+    case TS_ERR_OVERFLOW:  return "gap inside the captured buffer";
     case TS_ERR_PARAM:     return "bad parameters";
     case TS_ERR_NO_DMA:    return "DMA not initialized";
     default:               return "unknown";
@@ -1138,7 +1261,9 @@ void TimestampTest(int entries, u32 edge_skip)
     lost   = core_rd(COUNTER_CORE_LOST_COUNT_OFFSET);
 
     xil_printf(" TS_COUNT   %lu\r\n", (unsigned long)ts_cnt);
-    xil_printf(" LOST_COUNT %lu\r\n", (unsigned long)lost);
+    xil_printf(" LOST_COUNT %lu%s\r\n", (unsigned long)lost,
+               (lost != 0 && rc >= 0)
+                   ? "  (dropped after buffer filled, data intact)" : "");
     xil_printf(" overflow   %d\r\n",
                (status & COUNTER_CORE_STAT_OVERFLOW) ? 1 : 0);
 
@@ -1303,10 +1428,14 @@ void TimestampTest(int entries, u32 edge_skip)
     /*-------------------------------------------------------------------
      * Verdict
      *-----------------------------------------------------------------*/
-    if (lost == 0 && brk < 0 && rc == entries)
+    /* LOST_COUNT is deliberately not part of this verdict. Edges dropped
+       after the buffer filled do not affect what was collected, and at high
+       input rates that tail is unavoidable -- the engine keeps running until
+       software stops it. The verdict is about the delivered buffer only. */
+    if (brk < 0 && rc == entries)
         xil_printf(" RESULT: gap-free, %d consecutive timestamps\r\n", n);
     else
-        xil_printf(" RESULT: gaps present, see LOST_COUNT and sequence above\r\n");
+        xil_printf(" RESULT: gaps present, see the sequence check above\r\n");
 
     /* Full register state right after the capture.
      *

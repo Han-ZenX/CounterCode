@@ -48,17 +48,18 @@
 
 
 // IP VLNV: xilinx.com:user:Counter_Core:1.0
-// IP Revision: 6
+// IP Revision: 10
 
 (* X_CORE_INFO = "Counter_Core_v1_0,Vivado 2018.3" *)
 (* CHECK_LICENSE_TYPE = "ps_Counter_Core_0_1,Counter_Core_v1_0,{}" *)
-(* CORE_GENERATION_INFO = "ps_Counter_Core_0_1,Counter_Core_v1_0,{x_ipProduct=Vivado 2018.3,x_ipVendor=xilinx.com,x_ipLibrary=user,x_ipName=Counter_Core,x_ipVersion=1.0,x_ipCoreRevision=6,x_ipLanguage=VERILOG,x_ipSimLanguage=MIXED,C_M_AXIS_TDATA_WIDTH=64,C_M_AXIS_START_COUNT=32,C_S_AXI_DATA_WIDTH=32,C_S_AXI_ADDR_WIDTH=8,FIFO_ADDR_WIDTH=12,NUM_TAPS=64}" *)
+(* CORE_GENERATION_INFO = "ps_Counter_Core_0_1,Counter_Core_v1_0,{x_ipProduct=Vivado 2018.3,x_ipVendor=xilinx.com,x_ipLibrary=user,x_ipName=Counter_Core,x_ipVersion=1.0,x_ipCoreRevision=10,x_ipLanguage=VERILOG,x_ipSimLanguage=MIXED,C_M_AXIS_TDATA_WIDTH=64,C_M_AXIS_START_COUNT=32,C_S_AXI_DATA_WIDTH=32,C_S_AXI_ADDR_WIDTH=8,FIFO_ADDR_WIDTH=12,NUM_TAPS=64}" *)
 (* DowngradeIPIdentifiedWarnings = "yes" *)
 module ps_Counter_Core_0_1 (
   clk_fs_p,
   clk_fs_n,
   clk_fx_p,
   clk_fx_n,
+  stream_aresetn,
   m_axis_tdata,
   m_axis_tstrb,
   m_axis_tlast,
@@ -93,6 +94,9 @@ input wire clk_fs_p;
 input wire clk_fs_n;
 input wire clk_fx_p;
 input wire clk_fx_n;
+(* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME stream_aresetn, POLARITY ACTIVE_LOW, INSERT_VIP 0" *)
+(* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 stream_aresetn RST" *)
+output wire stream_aresetn;
 (* X_INTERFACE_INFO = "xilinx.com:interface:axis:1.0 M_AXIS TDATA" *)
 output wire [63 : 0] m_axis_tdata;
 (* X_INTERFACE_INFO = "xilinx.com:interface:axis:1.0 M_AXIS TSTRB" *)
@@ -169,6 +173,7 @@ input wire s_axi_aresetn;
     .clk_fs_n(clk_fs_n),
     .clk_fx_p(clk_fx_p),
     .clk_fx_n(clk_fx_n),
+    .stream_aresetn(stream_aresetn),
     .m_axis_tdata(m_axis_tdata),
     .m_axis_tstrb(m_axis_tstrb),
     .m_axis_tlast(m_axis_tlast),
