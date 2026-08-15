@@ -238,8 +238,25 @@ module ts_engine #(
             skip_cnt  <= 32'd0;
             skip_zero <= 1'b1;
         end else if (ts_start) begin
-            skip_cnt  <= 32'd0;
-            skip_zero <= 1'b1;
+            // An edge can land on the very cycle the start pulse arrives.
+            // do_capture is combinational and skip_zero is already set, so
+            // that edge IS written to the FIFO -- but this branch outranks the
+            // edge_hit branch below, so without the reload here skip_zero would
+            // stay set and the NEXT edge would be captured as well. The result
+            // is two entries one signal period apart at the head of a series
+            // that is otherwise skipped correctly, which then poisons the
+            // min_delta estimate in the host's continuity check and makes every
+            // subsequent normal interval read as a gap.
+            //
+            // skip_limit is only being loaded this same cycle, so the reload
+            // has to read edge_skip directly.
+            if (do_capture) begin
+                skip_cnt  <= edge_skip;
+                skip_zero <= (edge_skip == 32'd0);
+            end else begin
+                skip_cnt  <= 32'd0;
+                skip_zero <= 1'b1;
+            end
         end else if (edge_hit) begin
             if (skip_zero) begin
                 // Just captured: reload. skip_limit of 0 means capture every

@@ -278,7 +278,7 @@ int init_freqcounter(void)
     FREF = 4999700;
     SetGate(100.0);
     char fs[64];
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 100; i++) {
         int rc = ReadFr_TimestampMode(fs);
         xil_printf("[%d] rc=%d  f = %s", i, rc, fs);
     }
@@ -607,6 +607,39 @@ int CaptureTimestamps(u64 *buf, int entries, u32 edge_skip, u32 timeout_ms)
         if (c0 > c1) {
             xil_printf("[TS] dropped stale leading entry (coarse %lu > %lu)\r\n",
                        (unsigned long)c0, (unsigned long)c1);
+            memmove(&buf[0], &buf[1], (size_t)(entries - 1) * sizeof(u64));
+            entries--;
+        }
+    }
+
+    /* Drop a duplicated leading entry.
+     *
+     * An edge landing on the same clk_fs cycle as the engine's start pulse got
+     * captured while the skip counter reload was overridden by the start
+     * branch, so the following edge was captured too -- two entries one signal
+     * period apart at the head of an otherwise correctly skipped series. Odds
+     * are one in (f_s / f_x), about 1.6% at 5 MHz, which matches how rarely it
+     * showed up.
+     *
+     * The damage is out of proportion to the defect: VerifyContinuity
+     * estimates the normal spacing as the smallest coarse increment, so that
+     * one short interval drags the threshold below the real spacing and EVERY
+     * subsequent interval reads as a gap. The capture is then reported as
+     * broken and the caller refits only the leading run.
+     *
+     * Fixed in ts_engine.v (the ts_start branch now reloads when it captures).
+     * This guard stays for bitstreams built before that fix -- with correct
+     * data the two intervals are within one tick of each other and it never
+     * triggers.
+     */
+    if (entries >= 3) {
+        u32 d01 = COUNTER_CORE_TS_COARSE(buf[1]) - COUNTER_CORE_TS_COARSE(buf[0]);
+        u32 d12 = COUNTER_CORE_TS_COARSE(buf[2]) - COUNTER_CORE_TS_COARSE(buf[1]);
+
+        if (d01 * 2u < d12) {
+            xil_printf("[TS] dropped duplicated leading entry"
+                       " (delta %lu then %lu)\r\n",
+                       (unsigned long)d01, (unsigned long)d12);
             memmove(&buf[0], &buf[1], (size_t)(entries - 1) * sizeof(u64));
             entries--;
         }
