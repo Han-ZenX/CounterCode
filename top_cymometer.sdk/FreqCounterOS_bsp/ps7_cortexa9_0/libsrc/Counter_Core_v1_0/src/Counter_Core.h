@@ -53,18 +53,18 @@
 /****************** Timestamp fields (64-bit, written to DDR by DMA) ********************/
 /*
  * [63:32] coarse   coarse counter in the clk_fs domain
- * [31:26] tdc      TDC phase 0..63
- * [25]    ovf      a drop occurred before this entry
- * [24]    tdc_ok   TDC fine value is valid
- * [23:0]  seq      entry sequence number
+ * [31:24] tdc      TDC phase 0..255
+ * [23]    ovf      a drop occurred before this entry
+ * [22]    tdc_ok   TDC fine value is valid
+ * [21:0]  seq      entry sequence number
  */
 #define COUNTER_CORE_TS_COARSE(w)       ((u32)((w) >> 32))
-#define COUNTER_CORE_TS_TDC(w)          ((u32)(((w) >> 26) & 0x3Fu))
-#define COUNTER_CORE_TS_OVF(w)          ((u32)(((w) >> 25) & 0x1u))
-#define COUNTER_CORE_TS_TDC_OK(w)       ((u32)(((w) >> 24) & 0x1u))
-#define COUNTER_CORE_TS_SEQ(w)          ((u32)((w) & 0xFFFFFFu))
+#define COUNTER_CORE_TS_TDC(w)          ((u32)(((w) >> 24) & 0xFFu))
+#define COUNTER_CORE_TS_OVF(w)          ((u32)(((w) >> 23) & 0x1u))
+#define COUNTER_CORE_TS_TDC_OK(w)       ((u32)(((w) >> 22) & 0x1u))
+#define COUNTER_CORE_TS_SEQ(w)          ((u32)((w) & 0x3FFFFFu))
 
-#define COUNTER_CORE_TDC_NUM_TAPS       64
+#define COUNTER_CORE_TDC_NUM_TAPS       256
 #define COUNTER_CORE_VERSION_MAGIC      0x43430100u
 
 /****************** Register access ********************/

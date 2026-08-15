@@ -48,7 +48,7 @@
 
 
 // IP VLNV: xilinx.com:user:Counter_Core:1.0
-// IP Revision: 10
+// IP Revision: 12
 
 `timescale 1ns/1ps
 
@@ -166,7 +166,7 @@ input wire s_axi_aresetn;
     .C_S_AXI_DATA_WIDTH(32),  // Width of S_AXI data bus
     .C_S_AXI_ADDR_WIDTH(8),  // Width of S_AXI address bus
     .FIFO_ADDR_WIDTH(12),
-    .NUM_TAPS(64)
+    .NUM_TAPS(256)
   ) inst (
     .clk_fs_p(clk_fs_p),
     .clk_fs_n(clk_fs_n),

@@ -156,14 +156,14 @@
   "../../../bd/ps/ipshared/6021/hdl/signal.v" \
   "../../../bd/ps/ipshared/6021/hdl/Counter_Sig_v1_0.v" \
   "../../../bd/ps/ip/ps_Counter_Sig_0_1/sim/ps_Counter_Sig_0_1.v" \
-  "../../../bd/ps/ipshared/9721/hdl/Counter_Core_v1_0_M_AXIS.v" \
-  "../../../bd/ps/ipshared/9721/hdl/Counter_Core_v1_0_S_AXI.v" \
-  "../../../bd/ps/ipshared/9721/src/cdc.v" \
-  "../../../bd/ps/ipshared/9721/src/counter_core.v" \
-  "../../../bd/ps/ipshared/9721/src/eq_counter.v" \
-  "../../../bd/ps/ipshared/9721/src/tdc.v" \
-  "../../../bd/ps/ipshared/9721/src/ts_engine.v" \
-  "../../../bd/ps/ipshared/9721/hdl/Counter_Core_v1_0.v" \
+  "../../../bd/ps/ipshared/5d28/hdl/Counter_Core_v1_0_M_AXIS.v" \
+  "../../../bd/ps/ipshared/5d28/hdl/Counter_Core_v1_0_S_AXI.v" \
+  "../../../bd/ps/ipshared/5d28/src/cdc.v" \
+  "../../../bd/ps/ipshared/5d28/src/counter_core.v" \
+  "../../../bd/ps/ipshared/5d28/src/eq_counter.v" \
+  "../../../bd/ps/ipshared/5d28/src/tdc.v" \
+  "../../../bd/ps/ipshared/5d28/src/ts_engine.v" \
+  "../../../bd/ps/ipshared/5d28/hdl/Counter_Core_v1_0.v" \
   "../../../bd/ps/ip/ps_Counter_Core_0_1/sim/ps_Counter_Core_0_1.v" \
 -endlib
 -makelib xcelium_lib/axi_protocol_converter_v2_1_18 \

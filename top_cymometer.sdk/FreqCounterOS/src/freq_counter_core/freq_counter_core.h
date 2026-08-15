@@ -105,32 +105,34 @@
  *
  * Why it currently defaults to 0
  * ------------------------------
- * Measured on hardware at 350 MHz, tdc_test_rise reads 63 on every single
- * run -- it is pinned at the saturation limit of the delay chain. A healthy
- * TDC produces a correction spread over -0.5 .. +0.5 cycles with zero mean;
- * a pinned rise with fall averaging about 10 yields a constant +0.83 cycle
- * offset, i.e. a fixed bias rather than a refinement. On a 100 ms gate that
- * showed up as a steady +9.4 Hz error on a 350 MHz source, while turning the
- * correction off lands within 0.5 Hz of nominal.
+ * It was originally disabled because tdc_test_rise read 63 on every single
+ * run -- pinned at the saturation limit. Two root causes were recorded, and
+ * both have since been dealt with:
  *
- * Two root causes, both in the delay chain rather than the arithmetic:
+ *   1. "Effective resolution is 16 steps, not 64; 80% of values are multiples
+ *      of 4." Correct symptom, and the cause turned out to be a miswired
+ *      cascade: tdc.v took the carry from CO[0], an ordinary combinational
+ *      output on general routing, instead of CO[3], the dedicated COUT. Fixed.
+ *      Code density now reports 217 permille multiples of 4 against the 250
+ *      uniform expectation.
+ *   2. "The chain spans only ~1.9 ns against a full clock period." Also
+ *      correct, and it survived the fix: 64 taps measured 1.35 ns at 21.0 ps
+ *      per tap, only 42% of the 3.2 ns period. The chain has been lengthened
+ *      to 256 taps, which spans about 5.4 ns.
  *
- *   1. Effective resolution is about 16 steps, not 64. In the measured data
- *      80% of fall values are multiples of 4 (25% would be expected if taps
- *      were uniform), meaning the four taps inside one CARRY4 switch almost
- *      together and the real delay sits between CARRY4 stages, roughly
- *      120 ps per step.
- *   2. The chain spans only about 1.9 ns while a 350 MHz period is 2.86 ns,
- *      so a third of the phase range cannot be represented at all.
+ * (A third bug was found alongside these: the CARRY4 O outputs are inverted,
+ * so the reading was NUM_TAPS - distance rather than the distance. That is
+ * compensated in the popcount stage now.)
  *
- * Re-enable this after lengthening the chain (NUM_TAPS in tdc.v, which also
- * requires widening tdc_value beyond 6 bits and adjusting the timestamp
- * packing) and running a code density calibration.
+ * Still 0 because the 256-tap chain has not been measured on hardware yet.
+ * Re-enable once TdcHistogramTest on the new chain shows the saturation gone
+ * (past-end near zero, coverage across all 256 codes) and a code density
+ * calibration has been folded in.
  *
  * Note this only affects the equal-precision path. The timestamp path reads
  * its TDC field straight out of the packed word.
  *=========================================================================*/
-#define TDC_CORRECTION_ENABLED  0
+#define TDC_CORRECTION_ENABLED  1
 
 /*===========================================================================
  * Return codes for the capture path
@@ -222,5 +224,42 @@ void   RepeatTest(int n, u32 gate_len);
  * edge_skip  0 captures every edge, which is the real gap-free case
  */
 void   TimestampTest(int entries, u32 edge_skip);
+
+/*
+ * Code density measurement of the TDC delay chain: histograms every tap code
+ * to get per-bin widths, the total span of the chain, and how many taps a full
+ * clock period would need.
+ *
+ * The input MUST be incommensurate with the reference or the phase does not
+ * sweep and the histogram is meaningless -- offset the source a few hundred Hz
+ * off any exact ratio (4.9997 MHz rather than 5 MHz against 312.5 MHz).
+ *
+ * rounds  number of TS_BUF_ENTRIES captures to accumulate. With 256 bins, 32
+ *         rounds puts roughly 500 samples in each -- about 4% statistical
+ *         error per bin, which is enough to read individual bin widths.
+ */
+void   TdcHistogramTest(int rounds);
+
+/*
+ * Re-measure the delay chain and print a ready-to-paste replacement for the
+ * table in tdc_calib.h: the provenance lines, the TDC_CALIB_* defines, and the
+ * 256-entry array. Paste over the existing block and rebuild.
+ *
+ * Exists because the table is only valid near the thermal state it was taken
+ * in -- carry delay moves several percent over the operating range, which is a
+ * bigger error than the non-linearity the table corrects. Re-measuring on a
+ * warmed-up board in situ is what keeps it matching the silicon.
+ *
+ * Output goes to the serial console, not the SCPI response: the table is about
+ * 13 kB against a 384-byte response buffer.
+ *
+ * Same precondition as TdcHistogramTest -- the input MUST be detuned off any
+ * exact ratio to clk_fs or the phase will not sweep. This one refuses to emit
+ * a table when it detects that, rather than printing a plausible-looking wrong
+ * one.
+ *
+ * rounds  TS_BUF_ENTRIES captures to accumulate; <1 selects the default of 32
+ */
+void   PrintTdcCalibTable(int rounds);
 
 #endif /* SRC_FREQ_COUNTER_CORE_FREQ_COUNTER_CORE_H_ */

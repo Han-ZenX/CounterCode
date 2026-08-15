@@ -54,11 +54,24 @@ set_clock_groups -asynchronous \
 # this path is deliberately not meant to meet setup/hold and must be excluded
 # -- otherwise it reports failures that cannot and should not be fixed.
 #
-# Note this only silences the analysis. It does NOT make the chain uniform:
-# tap-to-tap delay is set by placement, and the measured 133 ps/tap (vs the
-# 50 ps nominal) comes from CARRY4 blocks being spread out. Making the chain
-# linear needs manual LOC/RLOC placement of the CARRY4 column, which is a
-# separate exercise.
+# Note this only silences the analysis, it says nothing about uniformity.
+#
+# The earlier note here blamed the measured 133 ps/tap on CARRY4 blocks being
+# spread out, and prescribed manual LOC/RLOC placement. That diagnosis was
+# wrong. The chain used to cascade on CO[0], which is an ordinary combinational
+# output routed through general interconnect -- that routing was the 133 ps.
+# Only CO[3] drives the dedicated COUT pin. Now that tdc.v cascades on CO[3],
+# the connection is COUT -> CIN of the slice directly above, which is hard
+# wired, so the placer has no freedom left: the blocks must already sit in one
+# continuous column.
+#
+# LOC therefore buys little delay-wise. Its remaining value is repeatability --
+# pinning the chain so two implementation runs are comparable. Because the
+# cascade is vertical and forced, pinning stage 0 is enough to pin all 16.
+# Measure first (TdcHistogramTest) and only pin if runs disagree.
+#
+# set_property LOC SLICE_X0Y0 [get_cells \
+#     ps_i/Counter_Core_0/inst/u_ts_engine/u_tdc/delay_stage[0].carry4_inst]
 #-----------------------------------------------------------------------------
 set_false_path -to [get_pins -hier -filter {NAME =~ *tdc*/tap_reg_reg*/D}]
 

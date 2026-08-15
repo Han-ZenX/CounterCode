@@ -48,11 +48,11 @@
 
 
 // IP VLNV: xilinx.com:user:Counter_Core:1.0
-// IP Revision: 10
+// IP Revision: 12
 
 (* X_CORE_INFO = "Counter_Core_v1_0,Vivado 2018.3" *)
 (* CHECK_LICENSE_TYPE = "ps_Counter_Core_0_1,Counter_Core_v1_0,{}" *)
-(* CORE_GENERATION_INFO = "ps_Counter_Core_0_1,Counter_Core_v1_0,{x_ipProduct=Vivado 2018.3,x_ipVendor=xilinx.com,x_ipLibrary=user,x_ipName=Counter_Core,x_ipVersion=1.0,x_ipCoreRevision=10,x_ipLanguage=VERILOG,x_ipSimLanguage=MIXED,C_M_AXIS_TDATA_WIDTH=64,C_M_AXIS_START_COUNT=32,C_S_AXI_DATA_WIDTH=32,C_S_AXI_ADDR_WIDTH=8,FIFO_ADDR_WIDTH=12,NUM_TAPS=64}" *)
+(* CORE_GENERATION_INFO = "ps_Counter_Core_0_1,Counter_Core_v1_0,{x_ipProduct=Vivado 2018.3,x_ipVendor=xilinx.com,x_ipLibrary=user,x_ipName=Counter_Core,x_ipVersion=1.0,x_ipCoreRevision=12,x_ipLanguage=VERILOG,x_ipSimLanguage=MIXED,C_M_AXIS_TDATA_WIDTH=64,C_M_AXIS_START_COUNT=32,C_S_AXI_DATA_WIDTH=32,C_S_AXI_ADDR_WIDTH=8,FIFO_ADDR_WIDTH=12,NUM_TAPS=256}" *)
 (* DowngradeIPIdentifiedWarnings = "yes" *)
 module ps_Counter_Core_0_1 (
   clk_fs_p,
@@ -167,7 +167,7 @@ input wire s_axi_aresetn;
     .C_S_AXI_DATA_WIDTH(32),  // Width of S_AXI data bus
     .C_S_AXI_ADDR_WIDTH(8),  // Width of S_AXI address bus
     .FIFO_ADDR_WIDTH(12),
-    .NUM_TAPS(64)
+    .NUM_TAPS(256)
   ) inst (
     .clk_fs_p(clk_fs_p),
     .clk_fs_n(clk_fs_n),

@@ -8,6 +8,7 @@
  */
 
 #include "freq_counter_core.h"
+#include "tdc_calib.h"
 #include "sleep.h"
 #include <stdlib.h>
 
@@ -262,21 +263,26 @@ int init_freqcounter(void)
     TimestampTest(4096, 0);
     TimestampTest(4096, 0);
 
+    /* Code density. The source must be a few hundred Hz off an exact ratio
+       with clk_fs or the phase does not sweep and the histogram is two spikes;
+       the function prints a warning when that happens. */
+    TdcHistogramTest(32);
+
 
     /*
     for (int i = 0; i < 5; i++)
         xil_printf("TS_COUNT=%lu\r\n",
                    (unsigned long)COUNTER_CORE_mReadReg(COUNTER_CORE_BASEADDR,
                                                         COUNTER_CORE_TS_COUNT_OFFSET));
-
-    FREF = 99000000;
+	*/
+    FREF = 4999700;
     SetGate(100.0);
     char fs[64];
     for (int i = 0; i < 10; i++) {
         int rc = ReadFr_TimestampMode(fs);
         xil_printf("[%d] rc=%d  f = %s", i, rc, fs);
     }
-    */
+
 
     return 0;
 }
@@ -356,6 +362,29 @@ static int RunEqualPrecision(u32 gate_len, u32 *stand, u32 *test, u32 *tdcw)
  *=========================================================================*/
 static double eq_effective_count(u32 test, u32 tdcw)
 {
+    /* The /TDC_NUM_TAPS below is wrong and is why this stays disabled.
+     *
+     * This TDC is clocked by clk_fx, not clk_fs, so its full scale is the
+     * period of the signal under test -- a moving target -- while the chain
+     * is a fixed 4750 ps of silicon. Dividing by the code count silently
+     * asserts the two are equal, which holds only near f_test = 210 MHz.
+     * Below that the chain cannot span a period at all (at 5 MHz it covers
+     * 2.4% and nearly every reading saturates); above it, only part of the
+     * codes are reachable and the scale is off by that fraction.
+     *
+     * The fix needs two things, neither of which exists yet for this chain:
+     *   - its own code density table. eq_counter/u_tdc_test is a different
+     *     physical chain (SLICE_X58Y75..Y90) from the one tdc_calib.h
+     *     describes, with its own bin widths.
+     *   - normalising by the real period instead of the code count:
+     *         t_fx_ps = 1e12 / (f_s * test / stand)
+     *         eff = test + (phase[rise] - phase[fall]) / t_fx_ps
+     *     which means this function also needs stand and f_s.
+     *
+     * Calibrating it is practical despite one gate yielding only one reading:
+     * shorten GATE_LEN to a few thousand clk_fs cycles and the sample rate
+     * goes from 10/s to tens of thousands per second.
+     */
 #if TDC_CORRECTION_ENABLED
     double eff = (double)test
                + (double)COUNTER_CORE_TDC_RISE(tdcw) / (double)TDC_NUM_TAPS
@@ -678,7 +707,9 @@ int VerifyContinuity(const u64 *buf, int count)
         if (COUNTER_CORE_TS_OVF(buf[i]))
             return i;
 
-        if (s != ((prev_seq + 1u) & 0xFFFFFFu))
+        /* 22 bits: must match seq_cnt in ts_engine.v, which gave up two bits
+           to the 8-bit TDC field when the chain grew to 256 taps. */
+        if (s != ((prev_seq + 1u) & 0x3FFFFFu))
             return i;
 
         if (d > threshold)
@@ -707,7 +738,7 @@ double ComputeFreqFromTimestamps(const u64 *buf, int count, u32 f_s)
 {
     int i;
     u32 seq0, prev_coarse;
-    double wrap_period, wrap_offset;
+    double wrap_period, wrap_offset, period_ps;
     double sum_x = 0.0, sum_t = 0.0, sum_xt = 0.0, sum_x2 = 0.0;
     double n, denom, slope;
 
@@ -716,6 +747,7 @@ double ComputeFreqFromTimestamps(const u64 *buf, int count, u32 f_s)
 
     wrap_period = 4294967296.0 / (double)f_s;
     wrap_offset = 0.0;
+    period_ps   = 1.0e12 / (double)f_s;
 
     seq0        = COUNTER_CORE_TS_SEQ(buf[0]);
     prev_coarse = COUNTER_CORE_TS_COARSE(buf[0]);
@@ -729,13 +761,19 @@ double ComputeFreqFromTimestamps(const u64 *buf, int count, u32 f_s)
             wrap_offset += wrap_period;
         prev_coarse = coarse;
 
-        /* tdc_ok is deliberately not used to discard points. If the delay
-           chain misbehaves the fine value is simply zero, degrading to coarse
-           resolution, which is preferable to throwing the whole series away. */
-        t = ((double)coarse + (double)tdc / (double)TDC_NUM_TAPS) / (double)f_s
-            + wrap_offset;
+        /* Phase comes from the code density table, not tdc/NUM_TAPS. The raw
+           code is neither linear in time nor full scale -- only 168 of the 256
+           codes are reachable, so the naive form compresses a whole period
+           into 0.656 of one and spaces the points unevenly on top of that.
 
-        x = (double)((COUNTER_CORE_TS_SEQ(buf[i]) - seq0) & 0xFFFFFFu);
+           tdc_ok is still not used to discard points. Code 0 means the edge
+           landed in the chain's head dead zone, and the table gives that its
+           midpoint (41 ps), which is real information -- better than dropping
+           the sample or calling its phase zero. */
+        t = ((double)coarse + (double)tdc_phase_ts[tdc] / period_ps)
+            / (double)f_s + wrap_offset;
+
+        x = (double)((COUNTER_CORE_TS_SEQ(buf[i]) - seq0) & 0x3FFFFFu);
 
         sum_x  += x;
         sum_t  += t;
@@ -1452,4 +1490,356 @@ void TimestampTest(int entries, u32 edge_skip)
     else if (tdc_min == tdc_max)
         xil_printf(" NOTE: tdc constant at %lu, delay chain suspect\r\n",
                    (unsigned long)tdc_min);
+}
+
+/*===========================================================================
+ * Histogram collection, shared by TdcHistogramTest and PrintTdcCalibTable
+ *
+ * Returns the total sample count, or a negative TS_ERR_* on a failed capture.
+ *=========================================================================*/
+static int tdc_collect_histogram(u32 *hist, int rounds,
+                                 u32 *valid, u32 *sat_hi, u32 *sat_lo)
+{
+    int r, i, rc;
+    int total = 0;
+
+    for (i = 0; i < TDC_NUM_TAPS; i++)
+        hist[i] = 0;
+
+    *valid = 0;
+    *sat_hi = 0;
+    *sat_lo = 0;
+
+    for (r = 0; r < rounds; r++) {
+        rc = CaptureTimestamps(g_ts_buf, TS_BUF_ENTRIES, 0, 2000);
+
+        /* An overflow still leaves a full buffer of valid samples, and for a
+           density measurement only the phase distribution matters, not
+           continuity -- so those rounds are kept. */
+        if (rc < 0 && rc != TS_ERR_OVERFLOW)
+            return rc;
+        if (rc < 0)
+            rc = TS_BUF_ENTRIES;
+
+        for (i = 0; i < rc; i++) {
+            u64 w   = g_ts_buf[i];
+            u32 tdc = COUNTER_CORE_TS_TDC(w);
+
+            if (COUNTER_CORE_TS_TDC_OK(w)) {
+                hist[tdc]++;
+                (*valid)++;
+            } else if (tdc == 0) {
+                (*sat_lo)++;   /* popcount 0: edge sat inside the head dead zone */
+            } else {
+                (*sat_hi)++;   /* popcount NUM_TAPS: phase ran past the chain end */
+            }
+            total++;
+        }
+    }
+
+    return total;
+}
+
+/*===========================================================================
+ * TdcHistogramTest -- code density measurement of the delay chain
+ *
+ * Measures the width of every TDC bin, and from those the total time span of
+ * the chain, by counting how often each code comes up.
+ *
+ * REQUIRES an input incommensurate with the reference. The method assumes the
+ * transition phase is uniformly distributed over the clk_fs period. At exactly
+ * 5 MHz against 312.5 MHz the ratio is precisely 62.5, the phase alternates
+ * between two points and the histogram collapses into two spikes. Offset the
+ * source by a few hundred Hz (4.9997 MHz works) before trusting the numbers.
+ * Coverage is printed so a degenerate run is obvious.
+ *
+ * With uniform phase the probability of landing in bin i is its width over the
+ * clock period:
+ *
+ *     width[i] = T_period * hist[i] / N_total
+ *
+ * N_total includes the saturated samples. Those are exactly the ones whose
+ * phase fell past the end of the chain, and they are what makes the span
+ * measurable rather than just the shape.
+ *
+ * mult-of-4 share is the regression check for the CO[3] cascade: when the
+ * chain was miswired to CO[0] the four taps inside one CARRY4 switched almost
+ * together and 80% of the values were multiples of 4. A healthy chain sits at
+ * the uniform expectation of 250 permille.
+ *=========================================================================*/
+void TdcHistogramTest(int rounds)
+{
+    static u32 hist[TDC_NUM_TAPS];
+    u32 sat_hi = 0, sat_lo = 0, valid = 0, total;
+    u32 covered = 0, mult4 = 0, n_used;
+    u32 min_cnt = 0xFFFFFFFFu, max_cnt = 0;
+    int min_i = 0, max_i = 0;
+    int c_lo = -1, c_hi = -1;
+    int i, rc;
+    u32 f_s;
+    double t_period_ps, covered_ps, dead_ps, t_tap_ps, chain_ps;
+
+    if (rounds < 1) rounds = 1;
+
+    f_s = GetClkFsFreq();
+    if (f_s == 0) {
+        xil_printf("[TDCHIST] reference frequency is zero\r\n");
+        return;
+    }
+
+    xil_printf("---- TdcHistogramTest: %d x %d entries ----\r\n",
+               rounds, TS_BUF_ENTRIES);
+    xil_printf(" reference  %lu Hz\r\n", (unsigned long)f_s);
+
+    rc = tdc_collect_histogram(hist, rounds, &valid, &sat_hi, &sat_lo);
+    if (rc < 0) {
+        xil_printf(" capture failed: %s (%d)\r\n", ts_err_text(rc), rc);
+        return;
+    }
+    total = (u32)rc;
+
+    if (total == 0 || valid == 0) {
+        xil_printf(" no usable samples (valid=0)\r\n");
+        return;
+    }
+
+    /*-------------------------------------------------------------------
+     * Locate the range of codes actually in use.
+     *
+     * Dividing by TDC_NUM_TAPS would be wrong once the chain is longer than
+     * one clock period: a phase cannot exceed a period, so the tail of the
+     * chain is never reached and those codes stay empty forever. Averaging
+     * over them reports a tap delay far below the real one -- with 256 taps
+     * and 168 codes in use it read 12.2 ps instead of 18.6 ps.
+     *-----------------------------------------------------------------*/
+    for (i = 0; i < TDC_NUM_TAPS; i++) {
+        if (hist[i] != 0) {
+            if (c_lo < 0) c_lo = i;
+            c_hi = i;
+        }
+        if ((i & 3) == 0) mult4 += hist[i];
+    }
+    n_used = (u32)(c_hi - c_lo + 1);
+
+    for (i = c_lo; i <= c_hi; i++) {
+        if (hist[i] != 0) covered++;
+        if (hist[i] < min_cnt) { min_cnt = hist[i]; min_i = i; }
+        if (hist[i] > max_cnt) { max_cnt = hist[i]; max_i = i; }
+    }
+
+    for (i = 0; i < TDC_NUM_TAPS; i++) {
+        if ((i & 7) == 0)
+            xil_printf("\r\n %3d:", i);
+        xil_printf(" %5lu", (unsigned long)hist[i]);
+    }
+    xil_printf("\r\n");
+
+    /*-------------------------------------------------------------------
+     * Three different spans, easy to confuse:
+     *
+     *   dead zone   phases too early to have reached tap 0. The chain head
+     *               costs extra delay because a general signal can only be
+     *               injected through CYINIT, so sum_comb reads 0 over that
+     *               window. Reported as at-zero.
+     *   covered     the phase interval the used codes actually resolve.
+     *   chain span  the physical length of the whole chain, which is what
+     *               decides whether it outruns the clock period.
+     *-----------------------------------------------------------------*/
+    t_period_ps = 1.0e12 / (double)f_s;
+    covered_ps  = t_period_ps * (double)valid  / (double)total;
+    dead_ps     = t_period_ps * (double)sat_lo / (double)total;
+    t_tap_ps    = covered_ps / (double)n_used;
+    chain_ps    = t_tap_ps * (double)TDC_NUM_TAPS;
+
+    xil_printf(" samples    %lu  (valid %lu, past-end %lu, at-zero %lu)\r\n",
+               (unsigned long)total, (unsigned long)valid,
+               (unsigned long)sat_hi, (unsigned long)sat_lo);
+    xil_printf(" codes used %d .. %d  (%lu codes, %lu dead inside range)\r\n",
+               c_lo, c_hi, (unsigned long)n_used,
+               (unsigned long)(n_used - covered));
+    xil_printf(" mult-of-4  %lu permille  (250 = uniform, 800 = CO[0] bug)\r\n",
+               (unsigned long)((u64)mult4 * 1000u / valid));
+
+    print_fixed3(" period     ", t_period_ps, " ps");
+    print_fixed3(" dead zone  ", dead_ps,     " ps");
+    print_fixed3(" covered    ", covered_ps,  " ps");
+    print_fixed3(" t_tap      ", t_tap_ps,    " ps");
+    print_fixed3(" chain span ", chain_ps,    " ps");
+    print_fixed3(" bin widest ", t_period_ps * (double)max_cnt / (double)total,
+                 " ps");
+    print_fixed3(" bin narrow ", t_period_ps * (double)min_cnt / (double)total,
+                 " ps");
+    xil_printf(" widest code %d, narrowest code %d\r\n", max_i, min_i);
+
+    /*-------------------------------------------------------------------
+     * Verdict on the chain length. past-end > 0 is the direct evidence that
+     * phases are running off the end; when it is zero the chain outruns the
+     * period and what matters is how much room is left.
+     *-----------------------------------------------------------------*/
+    if (sat_hi > 0) {
+        u32 need = (u32)(t_period_ps / t_tap_ps + 0.999);
+        xil_printf(" SHORT: %lu taps needed for a full period, have %d\r\n",
+                   (unsigned long)need, TDC_NUM_TAPS);
+    } else if (chain_ps > t_period_ps) {
+        xil_printf(" OK: chain covers the period with %lu%% margin\r\n",
+                   (unsigned long)((chain_ps / t_period_ps - 1.0) * 100.0));
+    } else {
+        /* Nothing saturated, yet the chain measures shorter than a period.
+           That combination only arises when the phase never swept the whole
+           period, so the numbers above are not trustworthy. */
+        xil_printf(" INCONCLUSIVE: no saturation but chain measures short --"
+                   " phase likely did not sweep\r\n");
+    }
+
+    if (n_used < 8)
+        xil_printf(" WARNING: phase is not sweeping -- offset the source a few"
+                   " hundred Hz off an exact ratio and rerun\r\n");
+}
+
+/*===========================================================================
+ * PrintTdcCalibTable -- measure the chain and emit a ready-to-paste table
+ *
+ * Same measurement as TdcHistogramTest, but the output is the contents of
+ * tdc_calib.h rather than a human report: paste the printed block over the
+ * existing one and rebuild.
+ *
+ * Why this exists as a separate entry point instead of a host-side script:
+ * the table is only valid near the thermal state it was taken in, and carry
+ * delay moves several percent over the operating range. Being able to
+ * re-measure on a warmed-up board, in situ, without a toolchain, is the
+ * difference between a table that matches the silicon and one that does not.
+ *
+ * The table goes to the serial console, not to the SCPI response -- 256
+ * entries is about 13 kB against a 384-byte response buffer.
+ *
+ * xil_printf has no %f, so every value is formatted through snprintf first.
+ *=========================================================================*/
+void PrintTdcCalibTable(int rounds)
+{
+    static u32   hist[TDC_NUM_TAPS];
+    static float phase[TDC_NUM_TAPS];
+    u32 valid, sat_hi, sat_lo, total, acc;
+    int i, c, c_lo = -1, c_hi = -1, rc;
+    u32 f_s;
+    double t_period_ps, covered_ps, dead_ps, t_tap_ps;
+    char buf[128];
+
+    if (rounds < 1)
+        rounds = 32;
+
+    f_s = GetClkFsFreq();
+    if (f_s == 0) {
+        xil_printf("[TDCCAL] reference frequency is zero\r\n");
+        return;
+    }
+
+    xil_printf("---- PrintTdcCalibTable: %d x %d entries ----\r\n",
+               rounds, TS_BUF_ENTRIES);
+
+    rc = tdc_collect_histogram(hist, rounds, &valid, &sat_hi, &sat_lo);
+    if (rc < 0) {
+        xil_printf(" capture failed: %s (%d)\r\n", ts_err_text(rc), rc);
+        return;
+    }
+    total = (u32)rc;
+
+    if (valid == 0) {
+        xil_printf(" no valid samples -- nothing to calibrate\r\n");
+        return;
+    }
+
+    for (i = 0; i < TDC_NUM_TAPS; i++) {
+        if (hist[i] != 0) {
+            if (c_lo < 0) c_lo = i;
+            c_hi = i;
+        }
+    }
+
+    /* Refuse to emit a table the phase never swept: it would look plausible
+       and be silently wrong, which is worse than no table at all. */
+    if ((c_hi - c_lo + 1) < TDC_NUM_TAPS / 8) {
+        xil_printf(" REFUSING: only %d codes seen. The source must be detuned"
+                   " off any exact ratio to clk_fs, otherwise the phase does"
+                   " not sweep and the table is meaningless.\r\n",
+                   c_hi - c_lo + 1);
+        return;
+    }
+
+    t_period_ps = 1.0e12 / (double)f_s;
+    covered_ps  = t_period_ps * (double)valid  / (double)total;
+    dead_ps     = t_period_ps * (double)sat_lo / (double)total;
+    t_tap_ps    = covered_ps / (double)(c_hi - c_lo + 1);
+
+    /* Phase of a code is the midpoint of its own bin, stacked on the dead
+       zone. Codes past c_hi are unreachable at this temperature; extrapolate
+       at t_tap so a colder, faster die meets a continuation, not a cliff. */
+    phase[0] = (float)(dead_ps / 2.0);
+    acc = 0;
+    for (c = 1; c < TDC_NUM_TAPS; c++) {
+        if (c <= c_hi) {
+            double w = t_period_ps * (double)hist[c] / (double)total;
+            phase[c] = (float)(dead_ps
+                               + t_period_ps * (double)acc / (double)total
+                               + w / 2.0);
+            acc += hist[c];
+        } else {
+            phase[c] = (float)((double)phase[c_hi] + (c - c_hi) * t_tap_ps);
+        }
+    }
+
+    /*-------------------------------------------------------------------
+     * Provenance block -- paste into the comment at the top of tdc_calib.h
+     *-----------------------------------------------------------------*/
+    xil_printf("\r\n===== paste into tdc_calib.h =====\r\n\r\n");
+
+    snprintf(buf, sizeof buf,
+             " *   Samples   %lu x %d = %lu",
+             (unsigned long)rounds, TS_BUF_ENTRIES, (unsigned long)total);
+    xil_printf("%s\r\n", buf);
+    snprintf(buf, sizeof buf,
+             " *   Reference %lu Hz, period %.1f ps",
+             (unsigned long)f_s, t_period_ps);
+    xil_printf("%s\r\n", buf);
+    snprintf(buf, sizeof buf,
+             " *   Result    dead zone %.1f ps, %d codes covering %.1f ps,",
+             dead_ps, c_hi - c_lo + 1, covered_ps);
+    xil_printf("%s\r\n", buf);
+    snprintf(buf, sizeof buf,
+             " *             t_tap %.3f ps, chain span %.0f ps (%.2f periods)",
+             t_tap_ps, t_tap_ps * TDC_NUM_TAPS,
+             t_tap_ps * TDC_NUM_TAPS / t_period_ps);
+    xil_printf("%s\r\n", buf);
+    if (sat_hi != 0) {
+        snprintf(buf, sizeof buf,
+                 " *   WARNING   %lu samples ran past the chain end -- chain"
+                 " is too short", (unsigned long)sat_hi);
+        xil_printf("%s\r\n", buf);
+    }
+    xil_printf("\r\n");
+
+    /*-------------------------------------------------------------------
+     * The defines and the table itself
+     *-----------------------------------------------------------------*/
+    snprintf(buf, sizeof buf, "#define TDC_CALIB_PERIOD_PS     %.1f",
+             t_period_ps);
+    xil_printf("%s\r\n", buf);
+    snprintf(buf, sizeof buf, "#define TDC_CALIB_DEAD_PS       %10.3f",
+             dead_ps);
+    xil_printf("%s\r\n", buf);
+    snprintf(buf, sizeof buf, "#define TDC_CALIB_T_TAP_PS      %10.3f",
+             t_tap_ps);
+    xil_printf("%s\r\n", buf);
+    xil_printf("#define TDC_CALIB_LAST_CODE     %d\r\n\r\n", c_hi);
+
+    xil_printf("static const float tdc_phase_ts[TDC_NUM_TAPS] = {\r\n");
+    for (c = 0; c < TDC_NUM_TAPS; c += 4) {
+        snprintf(buf, sizeof buf,
+                 "   %9.3ff,  %9.3ff,  %9.3ff,  %9.3ff,   /* %3d */",
+                 (double)phase[c],     (double)phase[c + 1],
+                 (double)phase[c + 2], (double)phase[c + 3], c);
+        xil_printf("%s\r\n", buf);
+    }
+    xil_printf("};\r\n");
+
+    xil_printf("\r\n===== end =====\r\n");
 }

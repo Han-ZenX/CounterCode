@@ -207,6 +207,26 @@ static int cmd_read_time(const char *args, char *resp)
 	return snprintf(resp, SCPI_RESP_MAX, "%.3f\n", START_T_TIME);
 }
 
+/*
+ * Re-measure the TDC delay chain and print a replacement for the table in
+ * tdc_calib.h, to be pasted in and rebuilt.
+ *
+ * The table goes to the serial console rather than into resp: 256 entries is
+ * roughly 13 kB and the response buffer is 384 bytes. The reply here only says
+ * where to look.
+ *
+ * Takes a few seconds, and it holds the link while it runs.
+ */
+static int cmd_cal_tdc(const char *args, char *resp)
+{
+	int rounds = atoi(args);          /* 0 (absent or junk) selects the default */
+
+	PrintTdcCalibTable(rounds);
+
+	return snprintf(resp, SCPI_RESP_MAX,
+			"tdc_calib.h block printed on the serial console\n");
+}
+
 //============================================================================
 // Command table
 //============================================================================
@@ -232,6 +252,7 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "PPM?",             cmd_ppm_query             },
 	{ "PPM",              cmd_ppm                   },
 	{ "INIT",             cmd_init                  },
+	{ "CAL:TDC?",         cmd_cal_tdc               },
 };
 
 #define SCPI_CMD_COUNT (sizeof(g_scpi_cmds) / sizeof(g_scpi_cmds[0]))
