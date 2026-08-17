@@ -108,10 +108,38 @@ static int cmd_conf_freq(const char *args, char *resp)
 	return 0;
 }
 
+/*
+ * Format a value the way a 53230A does: sign, one digit, 14 decimals, then a
+ * three-digit signed exponent -- 0.1 prints as "+1.00000000000000E-001".
+ *
+ * printf produces the mantissa directly, but the C library only guarantees two
+ * exponent digits (newlib emits exactly two), so the exponent is re-emitted
+ * here at the fixed width the instrument uses.
+ */
+static int scpi_format_53230(char *resp, double value)
+{
+	char buf[32];
+	char *e;
+	int exp;
+
+	snprintf(buf, sizeof(buf), "%+.14E", value);
+
+	e = strchr(buf, 'E');
+	if (e == NULL)          /* inf / nan carry no exponent field */
+		return snprintf(resp, SCPI_RESP_MAX, "%s\n", buf);
+
+	exp = atoi(e + 1);
+	*e = '\0';
+
+	return snprintf(resp, SCPI_RESP_MAX, "%sE%c%03d\n",
+			buf, (exp < 0) ? '-' : '+', (exp < 0) ? -exp : exp);
+}
+
+/* Gate time is held in milliseconds; a 53230A reports it in seconds. */
 static int cmd_gate_time_query(const char *args, char *resp)
 {
 	(void)args;
-	return snprintf(resp, SCPI_RESP_MAX, "%.3f\n", GATE_TIME);
+	return scpi_format_53230(resp, GATE_TIME / 1000.0);
 }
 
 /* Gate time is given in seconds on the wire and held in milliseconds. */

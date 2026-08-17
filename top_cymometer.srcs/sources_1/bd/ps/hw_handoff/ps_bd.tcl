@@ -195,7 +195,7 @@ proc create_root_design { parentCell } {
   # Create instance: axis_data_fifo_0, and set properties
   set axis_data_fifo_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 axis_data_fifo_0 ]
   set_property -dict [ list \
-   CONFIG.FIFO_DEPTH {16384} \
+   CONFIG.FIFO_DEPTH {32768} \
    CONFIG.TDATA_NUM_BYTES {8} \
  ] $axis_data_fifo_0
 
