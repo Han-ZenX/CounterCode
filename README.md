@@ -199,6 +199,27 @@ FREF <= safe_limit  →  ReadFr_TimestampMode()   时间戳 + DMA + 最小二乘
 
 SD 卡缺失或解析失败时回退到理想值。
 
+## 静态 IP 配置
+
+板卡使用静态 IP（`LWIP_DHCP = 0`）。地址可写在 SD 卡根目录的 `IPCFG.TXT`，每行一个 `KEY=VALUE`，空行与 `#` 开头的行忽略：
+
+```
+IP=192.168.1.115
+MASK=255.255.255.0
+GW=192.168.1.1
+```
+
+上电时 `main.c` 的 `assign_ip()` 先装入编译期默认值（`192.168.1.115 / 255.255.255.0 / 192.168.1.1`），再用文件中的值覆盖：
+
+| 情况 | 结果 |
+|------|------|
+| 文件读到且 `IP` 合法 | 采用文件中的地址；`MASK` / `GW` 缺失或非法时保留默认值 |
+| SD 卡挂载失败、文件不存在、`IP` 缺失或非法 | 三项全部回退到默认值 |
+
+`MASK` / `GW` 单独出错时不整体回退，是因为默认掩码与网关对同一网段仍然可用；`IP` 出错则整组丢弃，避免出现"文件里的掩码 + 默认地址"这种半套配置。
+
+改地址只需编辑 SD 卡上的 `IPCFG.TXT` 并重新上电，不必重新编译。
+
 ## 寄存器映射
 
 ### Counter_Core — 基地址 0x43C10000
@@ -250,7 +271,7 @@ SD 卡缺失或解析失败时回退到理想值。
 
 | 参数 | 值 |
 |------|------|
-| IP | 192.168.1.115（静态） |
+| IP | 192.168.1.115（静态，默认值，可由 SD 卡 `IPCFG.TXT` 覆盖） |
 | 端口 | 5025 |
 | MAC | 00:0a:35:00:01:02 |
 | 接收缓冲 | 1500 字节 |
@@ -292,9 +313,9 @@ Validate Design（让 M_AXIS 的 64 位宽度传播到 `axis_data_fifo_0` 与
 1. 导入 `FreqCounterOS` 项目
 2. 编译：`make -C FreqCounterOS/Debug`
 3. Create Boot Image：FSBL + `ps_wrapper.bit` + `FreqCounterOS.elf` → `BOOT.bin`
-4. 将 `BOOT.bin` 与 `FREQ.TXT` 拷入 SD 卡根目录，从 SD 卡启动
+4. 将 `BOOT.bin`、`FREQ.TXT` 与 `IPCFG.TXT` 拷入 SD 卡根目录，从 SD 卡启动
 
-`sd_card/` 目录存放了当前使用的启动镜像和频率配置文件。
+`sd_card/` 目录存放了当前使用的启动镜像、频率配置文件和网络配置文件。
 
 ## 项目文件结构
 
@@ -319,7 +340,7 @@ CounterCode/
 │   ├── FreqCounterOS/             应用程序（使用中）
 │   ├── FreqCounter/               旧版应用（已弃用）
 │   └── FSBL/
-├── sd_card/                       BOOT.bin + FREQ.TXT
+├── sd_card/                       BOOT.bin + FREQ.TXT + IPCFG.TXT
 ├── protocols/上位机通信协议.md
 ├── hardware/                      硬件原理图 PDF
 └── README.md

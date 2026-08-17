@@ -35,6 +35,8 @@
 #include "Counter_Core.h"
 #include "freq_counter_core/freq_counter_core.h"
 #include "xparameters.h"
+#include "ff.h"
+#include <string.h>
 
 #include "lwip/init.h"
 #include "lwip/inet.h"
@@ -52,6 +54,7 @@ err_t dhcp_start(struct netif *netif);
 #define DEFAULT_IP_ADDRESS "192.168.1.115"
 #define DEFAULT_IP_MASK "255.255.255.0"
 #define DEFAULT_GW_ADDRESS "192.168.1.1"
+#define IP_CONFIG_FILE "0:/IPCFG.TXT"
 #endif /* LWIP_IPV6 */
 
 #ifdef XPS_BOARD_ZCU102
@@ -96,8 +99,6 @@ static void assign_default_ip(ip_addr_t *ip, ip_addr_t *mask, ip_addr_t *gw)
 {
 	int err;
 
-	xil_printf("Configuring default IP %s \r\n", DEFAULT_IP_ADDRESS);
-
 	err = inet_aton(DEFAULT_IP_ADDRESS, ip);
 	if(!err)
 		xil_printf("Invalid default IP address: %d\r\n", err);
@@ -109,6 +110,127 @@ static void assign_default_ip(ip_addr_t *ip, ip_addr_t *mask, ip_addr_t *gw)
 	err = inet_aton(DEFAULT_GW_ADDRESS, gw);
 	if(!err)
 		xil_printf("Invalid default gateway address: %d\r\n", err);
+}
+
+/*
+ * Static IP configuration from the SD card.
+ *
+ * IPCFG.TXT in the card root holds one "KEY=VALUE" pair per line, keys IP,
+ * MASK and GW. Blank lines and lines starting with '#' are ignored:
+ *
+ *     IP=192.168.1.115
+ *     MASK=255.255.255.0
+ *     GW=192.168.1.1
+ *
+ * Same card and same mount/unmount pattern as LoadClkFsFreq(), which has
+ * already run by the time this is called.
+ */
+static char *trim_ws(char *s)
+{
+	char *e;
+
+	while (*s == ' ' || *s == '\t')
+		s++;
+
+	e = s + strlen(s);
+	while (e > s && (e[-1] == ' ' || e[-1] == '\t'))
+		*--e = '\0';
+
+	return s;
+}
+
+/*
+ * Returns 0 when a usable IP address was read; the caller then keeps whatever
+ * MASK and GW ended up in the outputs. Anything else returns non-zero and the
+ * outputs must be treated as clobbered.
+ *
+ * fs, file and buf are static on purpose: FATFS and FIL each carry a 512-byte
+ * sector buffer (FF_FS_TINY is 0), which is too much for the 4 KB task stack.
+ */
+static int load_ip_from_sd(ip_addr_t *ip, ip_addr_t *mask, ip_addr_t *gw)
+{
+	static FATFS fs;
+	static FIL file;
+	static char buf[512];
+	FRESULT res;
+	UINT br;
+	char *p, *line, *eq, *key, *val;
+	int have_ip = 0;
+
+	res = f_mount(&fs, "0:", 1);
+	if (res != FR_OK) {
+		xil_printf("[NET] f_mount failed: %d\r\n", res);
+		return -1;
+	}
+
+	res = f_open(&file, IP_CONFIG_FILE, FA_READ | FA_OPEN_EXISTING);
+	if (res != FR_OK) {
+		xil_printf("[NET] %s not found (err=%d)\r\n", IP_CONFIG_FILE, res);
+		f_mount(NULL, "0:", 0);
+		return -1;
+	}
+
+	memset(buf, 0, sizeof(buf));
+	res = f_read(&file, buf, sizeof(buf) - 1, &br);
+	f_close(&file);
+	f_mount(NULL, "0:", 0);
+
+	if (res != FR_OK || br == 0) {
+		xil_printf("[NET] %s read failed (err=%d)\r\n", IP_CONFIG_FILE, res);
+		return -1;
+	}
+	buf[br] = '\0';
+
+	p = buf;
+	while (*p) {
+		line = p;
+		while (*p && *p != '\r' && *p != '\n')
+			p++;
+		if (*p)
+			*p++ = '\0';
+
+		eq = strchr(line, '=');
+		if (!eq)
+			continue;
+		*eq = '\0';
+
+		key = trim_ws(line);
+		val = trim_ws(eq + 1);
+		if (key[0] == '#')
+			continue;
+
+		if (!strcmp(key, "IP")) {
+			if (inet_aton(val, ip))
+				have_ip = 1;
+			else
+				xil_printf("[NET] invalid IP in %s: %s\r\n", IP_CONFIG_FILE, val);
+		} else if (!strcmp(key, "MASK")) {
+			if (!inet_aton(val, mask))
+				xil_printf("[NET] invalid MASK in %s: %s\r\n", IP_CONFIG_FILE, val);
+		} else if (!strcmp(key, "GW")) {
+			if (!inet_aton(val, gw))
+				xil_printf("[NET] invalid GW in %s: %s\r\n", IP_CONFIG_FILE, val);
+		}
+	}
+
+	return have_ip ? 0 : -1;
+}
+
+static void assign_ip(ip_addr_t *ip, ip_addr_t *mask, ip_addr_t *gw)
+{
+	/* Defaults first, so a file that only sets IP still gets a mask and a
+	   gateway. A field the file sets badly keeps the default value. */
+	assign_default_ip(ip, mask, gw);
+
+	if (load_ip_from_sd(ip, mask, gw) == 0) {
+		xil_printf("Configuring IP from %s\r\n", IP_CONFIG_FILE);
+		return;
+	}
+
+	/* Partial results are discarded: the defaults are a consistent set,
+	   a half-loaded one is not. */
+	assign_default_ip(ip, mask, gw);
+	xil_printf("Configuring default IP %s \r\n", DEFAULT_IP_ADDRESS);
 }
 #endif /* LWIP_IPV6 */
 
@@ -211,7 +333,7 @@ void main_thread(void *p)
 		mscnt += DHCP_FINE_TIMER_MSECS;
 		if (mscnt >= 10000) {
 			xil_printf("ERROR: DHCP request timed out\r\n");
-			assign_default_ip(&(server_netif.ip_addr),
+			assign_ip(&(server_netif.ip_addr),
 						&(server_netif.netmask),
 						&(server_netif.gw));
 			break;
@@ -219,7 +341,7 @@ void main_thread(void *p)
 	}
 
 #else
-	assign_default_ip(&(server_netif.ip_addr), &(server_netif.netmask),
+	assign_ip(&(server_netif.ip_addr), &(server_netif.netmask),
 				&(server_netif.gw));
 #endif
 
