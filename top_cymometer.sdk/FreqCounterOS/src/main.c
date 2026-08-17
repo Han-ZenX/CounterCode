@@ -30,8 +30,10 @@
 #include "netif/xadapter.h"
 #include "platform_config.h"
 #include "xil_printf.h"
+#include "xil_assert.h"
 #include "uart/uart.h"
 #include "Counter_Core.h"
+#include "freq_counter_core/freq_counter_core.h"
 #include "xparameters.h"
 
 #include "lwip/init.h"
@@ -176,6 +178,17 @@ void main_thread(void *p)
 #ifdef XPS_BOARD_ZCU102
 	IicPhyReset();
 #endif
+
+	/* The counter comes up before the network: a missing cable or a failed
+	   bind must not leave it uninitialised. A failure here is reported but
+	   does not stop the network from coming up.
+
+	   The serial port carries debug output only - SCPI runs over TCP alone,
+	   and xil_printf writes the console UART directly, so no driver setup of
+	   its own is needed here. */
+	if (init_freqcounter() != 0)
+		xil_printf("WARNING: frequency counter init failed\r\n");
+
 	/* initialize lwIP before calling sys_thread_new */
 	lwip_init();
 
@@ -229,6 +242,17 @@ void main_thread(void *p)
 
 int main()
 {
+	/* Xil_Assert() ends in `while (Xil_AssertWait) {}`, so a failed driver
+	   assertion parks the task that hit it forever. The PHY path does
+	   exactly that with no cable attached: phy_setup_emacps() times out
+	   after 30 s and hands XST_FAILURE to XEmacPs_SetOperatingSpeed(),
+	   whose speed assertion then parks network_thread. main_thread stays
+	   suspended, so the static IP is never applied and the TCP server never
+	   starts - and it never recovers, because link_detect_thread needs the
+	   netif state that xemac_add() had not finished writing. Report and
+	   carry on instead of parking. */
+	Xil_AssertWait = 0;
+
 	main_thread_handle = sys_thread_new("main_thread", main_thread, 0,
 			THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
 	vTaskStartScheduler();

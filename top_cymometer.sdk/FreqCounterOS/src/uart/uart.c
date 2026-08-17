@@ -1,29 +1,37 @@
 /*
  * uart.c
  *
- *  Created on: 2024年12月22日
+ *  Created on: 2024-12-22
  *      Author: hanzheng
  */
 #include "uart.h"
 
+#include "FreeRTOS.h"
+
+XUartPs Uart_Ps;   /* definition; uart.h only declares it */
+
 u8 Uart_Rec_Buf[UART_RECV_LEN];
-u16 Uart_RxState = 0;
+volatile u16 Uart_RxState = 0;
 
 int init_uart(void)
 {
 	int status;
 
-	status = uart_init(&Uart_Ps);    //串口初始化
+	status = uart_init(&Uart_Ps);    /* controller */
 	if (status == XST_FAILURE) {
 		xil_printf("Uart Initial Failed\r\n");
 		return XST_FAILURE;
 	}
-	uart_intr_init(&Intc, &Uart_Ps); //串口中断初始化
+
+	if (uart_intr_init(&Uart_Ps) != XST_SUCCESS) {   /* receive interrupt */
+		xil_printf("Uart Interrupt Initial Failed\r\n");
+		return XST_FAILURE;
+	}
 
 	return 0;
 }
 
-//UART初始化函数
+/* UART controller initialisation */
 int uart_init(XUartPs* uart_ps)
 {
     int status;
@@ -36,89 +44,82 @@ int uart_init(XUartPs* uart_ps)
     if (status != XST_SUCCESS)
         return XST_FAILURE;
 
-    //UART设备自检
+    /* Controller self test */
     status = XUartPs_SelfTest(uart_ps);
     if (status != XST_SUCCESS)
         return XST_FAILURE;
 
-    //设置工作模式:正常模式
+    /* Normal operating mode */
     XUartPs_SetOperMode(uart_ps, XUARTPS_OPER_MODE_NORMAL);
-    //设置波特率:115200
-    XUartPs_SetBaudRate(uart_ps,9600);  //波特率默认设置为9600,用来适应上位机
-    //设置RxFIFO的中断触发等级
-    XUartPs_SetFifoThreshold(uart_ps, 1); //优先级必须设为1
+
+    /* This UART is also the BSP console (stdin/stdout = ps7_uart_0), so the
+       rate must match the console rate or every xil_printf comes out as
+       garbage. The 9600 that used to be set here did exactly that. */
+    XUartPs_SetBaudRate(uart_ps, 115200);
+
+    /* Raise the interrupt as soon as one byte is in the RxFIFO */
+    XUartPs_SetFifoThreshold(uart_ps, 1);
 
     return XST_SUCCESS;
 }
 
-//UART中断处理函数
+/* UART receive interrupt handler */
 void uart_intr_handler(void *call_back_ref)
 {
     XUartPs *uart_instance_ptr = (XUartPs *) call_back_ref;
     u8 rec_data = 0 ;
-    u32 isr_status ;                           //中断状态标志
+    u32 isr_status ;                           /* interrupt status */
 
-    //读取中断ID寄存器，判断触发的是哪种中断
+    /* Read the interrupt ID register to see which interrupt fired */
     isr_status = XUartPs_ReadReg(uart_instance_ptr->Config.BaseAddress,
                    XUARTPS_IMR_OFFSET);
     isr_status &= XUartPs_ReadReg(uart_instance_ptr->Config.BaseAddress,
                    XUARTPS_ISR_OFFSET);
 
-    //判断中断标志位RxFIFO是否触发
+    /* Did the RxFIFO trigger fire? */
     if (isr_status & (u32)XUARTPS_IXR_RXOVR){
         rec_data = XUartPs_RecvByte(XPAR_PS7_UART_0_BASEADDR);
-        //清除中断标志
+        /* Clear the interrupt flag */
         XUartPs_WriteReg(uart_instance_ptr->Config.BaseAddress,
                 XUARTPS_ISR_OFFSET, XUARTPS_IXR_RXOVR) ;
 
-        if((Uart_RxState & 0x8000) == 0)  //接收未完成
+        if((Uart_RxState & 0x8000) == 0)  /* line not complete yet */
 		{
-			if(rec_data == 0x0a) //0x0a是换行符
+			if(rec_data == 0x0a) /* 0x0a is the line terminator */
 			{
-				Uart_RxState |= 0x8000;   //接收完成了
+				Uart_RxState |= 0x8000;   /* line complete */
 			}
-			else                           //还没收到0x0A
+			else                           /* 0x0A not seen yet */
 			{
 				Uart_Rec_Buf[Uart_RxState & 0x3FFF] = rec_data;
 				Uart_RxState ++;
 				if(Uart_RxState > (UART_RECV_LEN - 1))
 				{
-					Uart_RxState = 0; //缓冲区满，计数清零
+					Uart_RxState = 0; /* buffer full, restart the count */
 				}
 			}
 		}
     }
-    //XUartPs_SendByte(XPAR_PS7_UART_0_BASEADDR,rec_data); //回环，发送和接收相同的字符
+    /* XUartPs_SendByte(XPAR_PS7_UART_0_BASEADDR,rec_data); loopback echo */
 }
 
-//串口中断初始化
-int uart_intr_init(XScuGic *intc, XUartPs *uart_ps)
+/* Register the receive interrupt with the FreeRTOS port */
+int uart_intr_init(XUartPs *uart_ps)
 {
-    int status;
-    //初始化中断控制器
-    XScuGic_Config *intc_cfg;
-    intc_cfg = XScuGic_LookupConfig(INTC_DEVICE_ID);
-    if (NULL == intc_cfg)
-        return XST_FAILURE;
-    status = XScuGic_CfgInitialize(intc, intc_cfg,
-            intc_cfg->CpuBaseAddress);
-    if (status != XST_SUCCESS)
+    /* The GIC is already up: the FreeRTOS port owns xInterruptController and
+       installs FreeRTOS_IRQ_Handler as the IRQ vector. Calling
+       XScuGic_CfgInitialize() or Xil_ExceptionRegisterHandler() here - as
+       this function used to - tears down the scheduler tick and the lwIP
+       Ethernet interrupt, so the handler goes in through the port's own
+       registration interface instead. */
+    if (xPortInstallInterruptHandler(UART_INT_IRQ_ID,
+            (XInterruptHandler)uart_intr_handler, (void *)uart_ps) != pdPASS)
         return XST_FAILURE;
 
-    //设置并打开中断异常处理功能
-    Xil_ExceptionInit();
-    Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_INT,
-            (Xil_ExceptionHandler)XScuGic_InterruptHandler,
-            (void *)intc);
-    Xil_ExceptionEnable();
-
-    //为中断设置中断处理函数
-    XScuGic_Connect(intc, UART_INT_IRQ_ID,
-            (Xil_ExceptionHandler) uart_intr_handler,(void *) uart_ps);
-    //设置UART的中断触发方式
+    /* Trigger on RxFIFO fill only */
     XUartPs_SetInterruptMask(uart_ps, XUARTPS_IXR_RXOVR);
-    //使能GIC中的串口中断
-    XScuGic_Enable(intc, UART_INT_IRQ_ID);
+    vPortEnableInterrupt(UART_INT_IRQ_ID);
+
     return XST_SUCCESS;
 }
 
@@ -134,19 +135,19 @@ void uart_cycle()
 {
 	int indexMain;
 
-	if((Uart_RxState & 0x8000) == 0x8000)   //接收完成了
+	if((Uart_RxState & 0x8000) == 0x8000)   /* a complete line is waiting */
 	{
 		/* Terminate the line before parsing: the ISR raises the completion
 		 * flag on 0x0A but never writes a NUL of its own. */
 		Uart_Rec_Buf[Uart_RxState & 0x3fff] = 0;
 
-		uart_data_process(); //处理串口收到的指令
+		uart_data_process(); /* execute the received command */
 
 		for(indexMain = 0; indexMain < (Uart_RxState & 0x3fff); indexMain ++)
 		{
 			Uart_Rec_Buf[indexMain] = 0;
 		}
 
-		Uart_RxState = 0; //清零接收到的字节计数
+		Uart_RxState = 0; /* reset the received byte count */
 	}
 }

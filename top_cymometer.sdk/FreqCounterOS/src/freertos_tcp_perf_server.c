@@ -26,228 +26,249 @@
  *
  */
 
+#include <string.h>
+
 #include "freertos_tcp_perf_server.h"
 
 extern struct netif server_netif;
-static struct perf_stats server;
 
-/* Interval time in seconds */
-#define REPORT_INTERVAL_TIME (INTERIM_REPORT_INTERVAL * 1000)
+/*
+ * Single-session SCPI server.
+ *
+ * One task owns the listening socket and the client socket and select()s
+ * across both. There is no per-connection thread, so there is no shared
+ * receive buffer and no accepted-socket handover to get wrong.
+ *
+ * The newest connection wins: a host that vanished without closing its
+ * socket cannot lock the instrument out until the next power cycle.
+ */
+static int listen_sock = -1;
+static int client_sock = -1;
 
-char Tcp_Rec_Buf[RECV_BUF_SIZE];
+static char rx_buf[RECV_BUF_SIZE];
+
+/*
+ * Line assembly. TCP is a byte stream, so one read() can deliver half a
+ * command, exactly one, or three back to back. Bytes are accumulated here
+ * until a newline arrives and only whole lines reach the parser.
+ */
+static char line_buf[SCPI_LINE_MAX];
+static int line_len;
+static int line_ovf;
 
 void print_app_header(void)
 {
-	xil_printf("TCP server listening on port %d\r\n",
-			TCP_CONN_PORT);
 #if LWIP_IPV6==1
-	xil_printf("On Host: Run $iperf -V -c %s%%<interface> -i %d -t 300 -w 2M\r\n",
-			inet6_ntoa(server_netif.ip6_addr[0]),
-			INTERIM_REPORT_INTERVAL);
+	xil_printf("SCPI TCP server listening on %s port %d\r\n",
+			inet6_ntoa(server_netif.ip6_addr[0]), TCP_CONN_PORT);
 #else
-	xil_printf("On Host: Run $iperf -c %s -i %d -t 300 -w 2M\r\n",
-			inet_ntoa(server_netif.ip_addr),
-			INTERIM_REPORT_INTERVAL);
+	xil_printf("SCPI TCP server listening on %s port %d\r\n",
+			inet_ntoa(server_netif.ip_addr), TCP_CONN_PORT);
 #endif /* LWIP_IPV6 */
 }
 
-static void print_tcp_conn_stats(int sock)
+static void close_client(void)
 {
-#if LWIP_IPV6==1
-	struct sockaddr_in6 local, remote;
-#else
-	struct sockaddr_in local, remote;
-#endif /* LWIP_IPV6 */
-	int size;
-
-	size = sizeof(local);
-	getsockname(sock, (struct sockaddr *)&local, (socklen_t *)&size);
-	getpeername(sock, (struct sockaddr *)&remote, (socklen_t *)&size);
-#if LWIP_IPV6==1
-	xil_printf("[%3d] local %s port %d connected with ", server.client_id,
-			inet6_ntoa(local.sin6_addr), ntohs(local.sin6_port));
-	xil_printf("%s port %d\r\n", inet6_ntoa(remote.sin6_addr),
-			ntohs(local.sin6_port));
-#else
-	xil_printf("[%3d] local %s port %d connected with ", server.client_id,
-			inet_ntoa(local.sin_addr), ntohs(local.sin_port));
-	xil_printf("%s port %d\r\n", inet_ntoa(remote.sin_addr),
-			ntohs(local.sin_port));
-#endif /* LWIP_IPV6 */
-	xil_printf("[ ID] Interval    Transfer     Bandwidth\n\r");
+	if (client_sock >= 0) {
+		close(client_sock);
+		client_sock = -1;
+	}
+	line_len = 0;
+	line_ovf = 0;
 }
 
-static void stats_buffer(char* outString, double data, enum measure_t type)
+/* Execute one complete line and return the response to the client. */
+static void tcp_data_process(const char *line)
 {
-	int conv = KCONV_UNIT;
-	const char *format;
-	double unit = 1024.0;
+	char resp[SCPI_RESP_MAX];
+	int len = scpi_execute(line, resp);
 
-	if (type == SPEED)
-		unit = 1000.0;
-
-	while (data >= unit && conv <= KCONV_GIGA) {
-		data /= unit;
-		conv++;
+	if (len > 0 && write(client_sock, resp, len) < 0) {
+		xil_printf("TCP server: write failed on socket %d, closing\r\n",
+				client_sock);
+		close_client();
 	}
-
-	/* Fit data in 4 places */
-	if (data < 9.995) { /* 9.995 rounded to 10.0 */
-		format = "%4.2f %c"; /* #.## */
-	} else if (data < 99.95) { /* 99.95 rounded to 100 */
-		format = "%4.1f %c"; /* ##.# */
-	} else {
-		format = "%4.0f %c"; /* #### */
-	}
-	sprintf(outString, format, data, kLabel[conv]);
 }
 
-/* The report function of a TCP server session */
-static void tcp_conn_report(u64_t diff, enum report_type report_type)
+/* Push received bytes through the line assembler. */
+static void line_feed(const char *data, int len)
 {
-	u64_t total_len;
-	double duration, bandwidth = 0;
-	char data[16], perf[16], time[64];
+	int i;
 
-	if (report_type == INTER_REPORT) {
-		total_len = server.i_report.total_bytes;
-	} else {
-		server.i_report.last_report_time = 0;
-		total_len = server.total_bytes;
-	}
+	for (i = 0; i < len; i++) {
+		char c = data[i];
 
-	/* Converting duration from milliseconds to secs,
-	 * and bandwidth to bits/sec .
-	 */
-	duration = diff / 1000.0; /* secs */
-	if (duration)
-		bandwidth = (total_len / duration) * 8.0;
+		if (c == '\r')
+			continue;
 
-	stats_buffer(data, total_len, BYTES);
-	stats_buffer(perf, bandwidth, SPEED);
-	/* On 32-bit platforms, xil_printf is not able to print
-	 * u64_t values, so converting these values in strings and
-	 * displaying results
-	 */
-	sprintf(time, "%4.1f-%4.1f sec",
-			(double)server.i_report.last_report_time,
-			(double)(server.i_report.last_report_time + duration));
-	xil_printf("[%3d] %s  %sBytes  %sbits/sec\n\r", server.client_id,
-			time, data, perf);
-
-	if (report_type == INTER_REPORT)
-		server.i_report.last_report_time += duration;
-}
-
-/* thread spawned for each connection */
-void tcp_recv_perf_traffic(void *p)
-{
-	xil_printf("tcp_recv_perf_traffic\r\n");
-
-	char recv_buf[RECV_BUF_SIZE];
-	int sock = *((int *)p);
-	int n, nwrote;
-
-	while (1)
-	{
-		/* read a max of RECV_BUF_SIZE-1 bytes, leaving room to terminate */
-		if ((n = read(sock, Tcp_Rec_Buf, RECV_BUF_SIZE - 1)) < 0) {
-			xil_printf("%s: error reading from socket %d, closing socket\r\n", __FUNCTION__, sock);
-			break;
+		if (c != '\n') {
+			if (line_len < (int)sizeof(line_buf) - 1)
+				line_buf[line_len++] = c;
+			else
+				line_ovf = 1;	/* drop the whole oversized line */
+			continue;
 		}
 
-		/* break if client closed connection */
-		if (n <= 0)
-			break;
+		line_buf[line_len] = '\0';
 
-		/* Terminate the line. The command parser scans up to a NUL, so
-		 * without this it would read past the new data into whatever the
-		 * previous command left in the buffer. */
-		Tcp_Rec_Buf[n] = '\0';
+		if (line_ovf) {
+			xil_printf("TCP server: command over %d bytes, dropped\r\n",
+					(int)sizeof(line_buf) - 1);
+		} else if (line_len > 0) {
+			if (!strcmp(line_buf, "quit")) {
+				close_client();
+				return;
+			}
 
-		/* break if the recved message = "quit" */
-		if (!strncmp(Tcp_Rec_Buf, "quit", 4))
-			break;
-
-		tcp_data_process(sock);
-
-		/*
-		if ((nwrote = write(sock, Tcp_Rec_Buf, n)) < 0) {
-			xil_printf("%s: ERROR responding to client echo request. received = %d, written = %d\r\n",
-					__FUNCTION__, n, nwrote);
-			xil_printf("Closing socket %d\r\n", sock);
-			break;
+			tcp_data_process(line_buf);
+			if (client_sock < 0)	/* the write failed */
+				return;
 		}
-		*/
-	}
 
-	/* close connection */
-	close(sock);
-	vTaskDelete(NULL);
+		line_len = 0;
+		line_ovf = 0;
+	}
 }
 
-void start_application(void)
+static void accept_client(void)
 {
-	int sock, new_sd;
 #if LWIP_IPV6==1
-	struct sockaddr_in6 address, remote;
+	struct sockaddr_in6 remote;
 #else
-	struct sockaddr_in address, remote;
+	struct sockaddr_in remote;
 #endif /* LWIP_IPV6 */
-	int size;
+	int size = sizeof(remote);
+	int new_sd;
 
-	/* set up address to connect to */
-        memset(&address, 0, sizeof(address));
-#if LWIP_IPV6==1
-	if ((sock = lwip_socket(AF_INET6, SOCK_STREAM, 0)) < 0) {
-		xil_printf("TCP server: Error creating Socket\r\n");
+	new_sd = accept(listen_sock, (struct sockaddr *)&remote,
+			(socklen_t *)&size);
+	if (new_sd < 0)
 		return;
+
+	if (client_sock >= 0) {
+		xil_printf("TCP server: dropping previous client on socket %d\r\n",
+				client_sock);
+		close_client();
+	}
+
+	client_sock = new_sd;
+	line_len = 0;
+	line_ovf = 0;
+
+#if LWIP_IPV6==1
+	xil_printf("TCP server: client connected from %s\r\n",
+			inet6_ntoa(remote.sin6_addr));
+#else
+	xil_printf("TCP server: client connected from %s\r\n",
+			inet_ntoa(remote.sin_addr));
+#endif /* LWIP_IPV6 */
+}
+
+static int open_listen_socket(void)
+{
+#if LWIP_IPV6==1
+	struct sockaddr_in6 address;
+#else
+	struct sockaddr_in address;
+#endif /* LWIP_IPV6 */
+
+	memset(&address, 0, sizeof(address));
+
+#if LWIP_IPV6==1
+	if ((listen_sock = lwip_socket(AF_INET6, SOCK_STREAM, 0)) < 0) {
+		xil_printf("TCP server: error creating socket\r\n");
+		return -1;
 	}
 	address.sin6_family = AF_INET6;
 	address.sin6_port = htons(TCP_CONN_PORT);
 	address.sin6_len = sizeof(address);
 #else
-	if ((sock = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-		xil_printf("TCP server: Error creating Socket\r\n");
-		return;
+	if ((listen_sock = lwip_socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		xil_printf("TCP server: error creating socket\r\n");
+		return -1;
 	}
 	address.sin_family = AF_INET;
 	address.sin_port = htons(TCP_CONN_PORT);
 	address.sin_addr.s_addr = INADDR_ANY;
 #endif /* LWIP_IPV6 */
 
-	if (bind(sock, (struct sockaddr *)&address, sizeof (address)) < 0) {
-		xil_printf("TCP server: Unable to bind to port %d\r\n",
-				TCP_CONN_PORT);
-		close(sock);
-		return;
+	if (bind(listen_sock, (struct sockaddr *)&address, sizeof(address)) < 0) {
+		xil_printf("TCP server: unable to bind to port %d\r\n", TCP_CONN_PORT);
+		close(listen_sock);
+		listen_sock = -1;
+		return -1;
 	}
 
-	if (listen(sock, 1) < 0) {
-		xil_printf("TCP server: tcp_listen failed\r\n");
-		close(sock);
-		return;
+	if (listen(listen_sock, 1) < 0) {
+		xil_printf("TCP server: listen failed\r\n");
+		close(listen_sock);
+		listen_sock = -1;
+		return -1;
 	}
 
-	init_freqcounter(); //初始化频率计
+	return 0;
+}
 
-	size = sizeof(remote);
+/* Serve until the listening socket itself fails. */
+static void server_loop(void)
+{
+	fd_set rfds;
+	int maxfd;
+	int n;
 
 	while (1) {
-		if ((new_sd = accept(sock, (struct sockaddr *)&remote,
-						(socklen_t *)&size)) > 0)
-			sys_thread_new("TCP_recv_perf thread",
-				tcp_recv_perf_traffic, (void*)&new_sd,
-				TCP_SERVER_THREAD_STACKSIZE,
-				DEFAULT_THREAD_PRIO);
+		FD_ZERO(&rfds);
+		FD_SET(listen_sock, &rfds);
+		maxfd = listen_sock;
+
+		if (client_sock >= 0) {
+			FD_SET(client_sock, &rfds);
+			if (client_sock > maxfd)
+				maxfd = client_sock;
+		}
+
+		if (lwip_select(maxfd + 1, &rfds, NULL, NULL, NULL) < 0) {
+			xil_printf("TCP server: select failed, rebuilding listener\r\n");
+			close_client();
+			close(listen_sock);
+			listen_sock = -1;
+			return;
+		}
+
+		if (FD_ISSET(listen_sock, &rfds)) {
+			accept_client();
+			/* Re-select before reading. A newly accepted socket can reuse
+			   the descriptor number of the client just dropped, whose bit
+			   is still set in rfds; reading on that stale bit would block
+			   the server until the new client happens to send. */
+			continue;
+		}
+
+		if (client_sock >= 0 && FD_ISSET(client_sock, &rfds)) {
+			n = read(client_sock, rx_buf, sizeof(rx_buf));
+			if (n <= 0)
+				close_client();		/* peer closed, or read error */
+			else
+				line_feed(rx_buf, n);
+		}
 	}
 }
 
-void tcp_data_process(int sock)
+static void tcp_server_task(void *p)
 {
-	char resp[SCPI_RESP_MAX];
-	int len = scpi_execute(Tcp_Rec_Buf, resp);
+	while (1) {
+		if (open_listen_socket() == 0)
+			server_loop();
 
-	if (len > 0)
-		write(sock, resp, len);
+		/* The listener could not be created, or it died. Back off and try
+		   again rather than leaving the instrument unreachable until the
+		   next power cycle. */
+		vTaskDelay(LISTEN_RETRY_SECS * 1000 / portTICK_RATE_MS);
+	}
+}
+
+void start_application(void)
+{
+	sys_thread_new("scpi_tcp_thread", tcp_server_task, NULL,
+			TCP_SERVER_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
 }

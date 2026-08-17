@@ -1,7 +1,7 @@
 /*
  * uart.h
  *
- *  Created on: 2024年12月22日
+ *  Created on: 2024-12-22
  *      Author: hanzheng
  */
 
@@ -9,20 +9,20 @@
 #define SRC_UART_H_
 
 //****************************************Copyright (c)***********************************//
-//原子哥在线教学平台：www.yuanzige.com
-//技术支持：www.openedv.com
-//淘宝店铺：http://openedv.taobao.com
-//关注微信公众平台微信号："正点原子"，免费获取ZYNQ & FPGA & STM32 & LINUX资料。
-//版权所有，盗版必究。
-//Copyright(C) 正点原子 2018-2028
+//ALIENTEK online teaching platform: www.yuanzige.com
+//Technical support: www.openedv.com
+//Taobao store: http://openedv.taobao.com
+//WeChat official account "ALIENTEK": free ZYNQ & FPGA & STM32 & LINUX material.
+//All rights reserved. Unauthorized reproduction prohibited.
+//Copyright(C) ALIENTEK 2018-2028
 //All rights reserved
 //----------------------------------------------------------------------------------------
-// File name:           main
+// File name:           uart
 // Last modified Date:  2019/10/8 17:25:36
 // Last Version:        V1.0
-// Descriptions:        串口中断环回
+// Descriptions:        UART interrupt-driven receive
 //----------------------------------------------------------------------------------------
-// Created by:          正点原子
+// Created by:          ALIENTEK
 // Created date:        2019/10/8 17:25:36
 // Version:             V1.0
 // Descriptions:        The original version
@@ -49,32 +49,32 @@
 #define TOP_CYMOMETER_IP_REG3 COUNTER_S_AXI_SLV_REG3_OFFSET
 #define TOP_CYMOMETER_IP_REG4 COUNTER_S_AXI_SLV_REG4_OFFSET
 
-#define UART_DEVICE_ID     XPAR_PS7_UART_0_DEVICE_ID    //串口设备ID
-#define INTC_DEVICE_ID     XPAR_SCUGIC_SINGLE_DEVICE_ID //中断ID
-#define UART_INT_IRQ_ID    XPAR_XUARTPS_0_INTR          //串口中断ID
+#define UART_DEVICE_ID     XPAR_PS7_UART_0_DEVICE_ID    // UART device ID
+#define UART_INT_IRQ_ID    XPAR_XUARTPS_0_INTR          // UART interrupt ID
 
-#define UART_RECV_LEN 200  //接收数据最长长度为200
+#define UART_RECV_LEN 200  // Longest accepted command line
 
-XScuGic Intc;              //中断控制器驱动程序实例
-XUartPs Uart_Ps;           //串口驱动程序实例
+extern XUartPs Uart_Ps;    // UART driver instance
 
 extern u8 Uart_Rec_Buf[UART_RECV_LEN];
-extern u16 Uart_RxState;                //接收状态标记
+// Receive state: bit 15 marks a complete line, bits 13:0 hold the byte count
+extern volatile u16 Uart_RxState;
 
 int init_uart(void);
 
-//UART初始化函数
+// UART controller initialisation
 int uart_init(XUartPs* uart_ps);
 
-//UART中断处理函数
+// UART receive interrupt handler
 void uart_intr_handler(void *call_back_ref);
 
-//串口中断初始化
-int uart_intr_init(XScuGic *intc, XUartPs *uart_ps);
+// Register the receive interrupt with the FreeRTOS port
+int uart_intr_init(XUartPs *uart_ps);
 
-//串口数据处理
+// Execute one completed line and print the response
 void uart_data_process(void);
 
+// Dispatch a completed line if one is waiting. Must be called periodically.
 void uart_cycle();
 
 #endif /* SRC_UART_H_ */

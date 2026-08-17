@@ -41,65 +41,24 @@
 
 #include "scpi/scpi.h"
 
-/* used as indices into kLabel[] */
-enum {
-	KCONV_UNIT,
-	KCONV_KILO,
-	KCONV_MEGA,
-	KCONV_GIGA,
-};
-
-/* labels for formats [KMG] */
-const char kLabel[] =
-{
-	' ',
-	'K',
-	'M',
-	'G'
-};
-
-/* used as type of print */
-enum measure_t {
-	BYTES,
-	SPEED
-};
-
-/* Report type */
-enum report_type {
-	/* The Intermediate report */
-	INTER_REPORT,
-	/* The server side test is done */
-	TCP_DONE_SERVER,
-	/* Remote side aborted the test */
-	TCP_ABORTED_REMOTE
-};
-
-struct interim_report {
-	u64_t start_time;
-	u64_t last_report_time;
-	u32_t total_bytes;
-};
-
-struct perf_stats {
-	u8_t client_id;
-	u64_t start_time;
-	u64_t total_bytes;
-	struct interim_report i_report;
-};
-
+/* Bytes taken from the socket in a single read() */
 #define RECV_BUF_SIZE 1500
+
+/* Longest SCPI command line accepted. A longer line is dropped whole. */
+#define SCPI_LINE_MAX 256
 
 #define TCP_SERVER_THREAD_STACKSIZE 2048
 
-/* server port to listen on/connect to */
+/* Server port to listen on */
 #define TCP_CONN_PORT 5025
 
-/* seconds between periodic bandwidth reports */
-#define INTERIM_REPORT_INTERVAL 5
+/* Seconds to wait before rebuilding a listening socket that failed */
+#define LISTEN_RETRY_SECS 1
 
-extern char Tcp_Rec_Buf[RECV_BUF_SIZE];
+/* Print the banner. Call once the interface has an address. */
+void print_app_header(void);
 
-//TCP数据处理
-void tcp_data_process(int sock);
+/* Start the SCPI server task. Returns as soon as the task exists. */
+void start_application(void);
 
 #endif /* __FREERTOS_TCP_SERVER_APP_H_ */

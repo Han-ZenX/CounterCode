@@ -19,7 +19,14 @@ src/uart/uart.o src/uart/uart.o: ../src/uart/uart.c ../src/uart/uart.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xscugic_hw.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/xil_exception.h \
  ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Core.h \
- ../src/uart/../scpi/scpi.h
+ ../src/uart/../scpi/scpi.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/FreeRTOS.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/FreeRTOSConfig.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/projdefs.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/portable.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/deprecated_definitions.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/portmacro.h \
+ ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/mpu_wrappers.h
 
 ../src/uart/uart.h:
 
@@ -64,3 +71,17 @@ src/uart/uart.o src/uart/uart.o: ../src/uart/uart.c ../src/uart/uart.h \
 ../../FreqCounterOS_bsp/ps7_cortexa9_0/include/Counter_Core.h:
 
 ../src/uart/../scpi/scpi.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/FreeRTOS.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/FreeRTOSConfig.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/projdefs.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/portable.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/deprecated_definitions.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/portmacro.h:
+
+../../FreqCounterOS_bsp/ps7_cortexa9_0/include/mpu_wrappers.h:
