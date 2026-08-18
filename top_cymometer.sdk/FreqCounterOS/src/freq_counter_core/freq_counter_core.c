@@ -279,21 +279,14 @@ int init_freqcounter(void)
      * correctly and reports far more anyway.
      */
 
-    TimestampTest(4096, 0);
-    TimestampTest(4096, 0);
+    //TimestampTest(4096, 0);
 
     /* Code density. The source must be a few hundred Hz off an exact ratio
        with clk_fs or the phase does not sweep and the histogram is two spikes;
        the function prints a warning when that happens. */
     TdcHistogramTest(32);
 
-
     /*
-    for (int i = 0; i < 5; i++)
-        xil_printf("TS_COUNT=%lu\r\n",
-                   (unsigned long)COUNTER_CORE_mReadReg(COUNTER_CORE_BASEADDR,
-                                                        COUNTER_CORE_TS_COUNT_OFFSET));
-	*/
     FREF = 4999700;
     SetGate(100.0);
     char fs[64];
@@ -301,7 +294,7 @@ int init_freqcounter(void)
         int rc = ReadFr_TimestampMode(fs);
         xil_printf("[%d] rc=%d  f = %s", i, rc, fs);
     }
-
+    */
 
     return 0;
 }
