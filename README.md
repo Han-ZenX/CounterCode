@@ -50,6 +50,7 @@
 | `CTR_STATUS0` | 输入 | W14 | LVCMOS33 | 状态 0（兼作基准频率来源选择） |
 | `CTR_STATUS1` | 输入 | W13 | LVCMOS33 | 状态 1 |
 | `CTR_START_T` | 输入 | J14 | LVCMOS25 | 启动时间测量触发 |
+| `clk_10m` | 输入 | V5 | LVCMOS33 | 外部 10 MHz 基准，用于校准 `clk_fs` |
 
 ### 自定义 IP
 
@@ -185,6 +186,40 @@ FREF <= safe_limit  →  PRESCALE.DIV4 = 0，直接送引擎
 
 SD 卡缺失或解析失败时回退到理想值。
 
+### 用外部 10 MHz 自动校准
+
+`FREQ.TXT` 里的值不必手工填。把一路标准 10 MHz 接到 `clk_10m`（V5），上位机先发一条
+`CAL:REF:PREP`、再发一条 `CAL:REF?`，固件就会把它送进时间戳引擎测一次，反推出 `clk_fs`
+的实际频率并写回 SD 卡。
+
+`CAL:REF:PREP` 置 `CTR_REF_CLOCK = 1`、`CTR_PRIREF = 0`，**这一步不能省**：板上这一路
+10 MHz 同时接到 LMK5B12204 的 `PRIREF_P` / `PRIREF_N`，`CTR_PRIREF` 为高时 PLL 会把
+312.5 MHz 直接锁到它上面，此后测出来必然是精确的 312.5 MHz —— 要校准的那个偏差被锁没了，
+而结果看上去完全正常。两个引脚上电都是 1。
+校准固定用 1 s 闸门（与 `FREQ:GATE:TIME` 无关，内部临时覆盖后还回），耗时约 1.1 秒。
+命令要求 `CTR_STATUS0` 与 `CTR_STATUS1` 都为 1，否则不做任何测量；响应是 `1`（已写入 SD 卡）
+或 `0`（任何失败），反推出的频率值打印在串口。
+
+原理是把比值的两端对调 —— 引擎测的始终是"输入的一个周期里装得下多少个 `clk_fs` 周期"，
+平时 `clk_fs` 是已知的一侧，换成一个按定义精确的 10 MHz 源之后，拟合结果就成了对 `clk_fs`
+自身的测量：
+
+```
+f_s,actual = 312 500 000 × 10 000 000 / f_meas
+```
+
+`f_meas` 是软件按标称 312.5 MHz 算出的那个"10 MHz"读数，偏高说明 `clk_fs` 实际偏慢。
+
+推算值必须落在 **312.49 ~ 312.51 MHz** 之内才写卡：没接信号、接错频率、或者烧的是不带
+`SRC_SEL` 的旧 bitstream，这三种情况都会算出一个外观合理的数字，写进去之后每次测频都按
+错误基准偏移。
+
+当前正在使用的基准频率可以用 `CAL:REF:VAL?` 读回，格式与 `FREQ:GATE:TIME?` 一样是
+53230A 科学计数法（`+3.12500000000000E+008`）。
+
+校准值仍然只在 `CTR_STATUS0` 为高时参与运算，这一点没变。推导与实现细节见
+[interface_spec.md 第 8 节](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
+
 ## 静态 IP 配置
 
 板卡使用静态 IP（`LWIP_DHCP = 0`）。地址可写在 SD 卡根目录的 `IPCFG.TXT`，每行一个 `KEY=VALUE`，空行与 `#` 开头的行忽略：
@@ -219,9 +254,10 @@ GW=192.168.1.1
 | 0x10 | `LOST_COUNT` | R | 因 FIFO 满丢弃的边沿数，gap-free 成立时恒为 0 |
 | 0x14 | — | — | 保留（原 `GATE_LEN`/`EQ_STAND`/`EQ_TEST`/`TDC_GATE`，等精度已删除，读作 0） |
 | 0x24 | `FIFO_LEVEL` | R | FIFO 中未取走的条目数 |
-| 0x28 | `VERSION` | R | 魔数 `0x43430101` |
+| 0x28 | `VERSION` | R | 魔数 `0x43430102` |
 | 0x2C | `TS_PKT_LEN` | R/W | M_AXIS 包长（拍）。**必须等于 DMA buffer 条数，填 0 会导致传输永不结束** |
 | 0x30 | `PRESCALE` | R/W | bit0 `DIV4_EN`，被测信号四分频后送时间戳引擎。只能在 `TS_EN` 为低时改写 |
+| 0x34 | `SRC_SEL` | R/W | bit0 `SRC_10M`，改测外部 10 MHz 基准而非 `clk_fx`。只能在 `TS_EN` 为低时改写 |
 
 时间戳格式（64 位，DMA 写入 DDR）：
 

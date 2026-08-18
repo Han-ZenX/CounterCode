@@ -68,6 +68,15 @@
 		input  wire  clk_fx_p,      // signal under test, LVDS_25
 		input  wire  clk_fx_n,
 
+		// External 10 MHz reference, single ended LVCMOS33.
+		//
+		// Selected in place of clk_fx by SRC_SEL.SRC_10M and fed to the same
+		// timestamp engine. Measuring a source whose frequency is known
+		// exactly turns the engine around: the fitted result is no longer the
+		// input frequency but a reading of clk_fs itself, which is what the
+		// reference calibration uses. See doc/interface_spec.md section 8.
+		input  wire  clk_10m,
+
 		// Reset for the downstream AXI-Stream FIFO, aclk domain, active low.
 		//
 		// Connect this to axis_data_fifo_0's s_axis_aresetn in the block
@@ -153,9 +162,29 @@
 	);
 
 	//========================================================================
+	// External 10 MHz reference input
+	//
+	// No BUFG here, unlike clk_fs / clk_fx. This signal never clocks a
+	// register: counter_core's source mux feeds it straight to the TDC delay
+	// chain and to the clk_fs domain sampler, both of which treat it as data.
+	// Putting it on a global buffer would consume a BUFG and force a
+	// CLOCK_DEDICATED_ROUTE waiver on a pin that is not clock capable,
+	// without changing what the logic does.
+	//========================================================================
+	wire clk_10m_ibuf;
+
+	IBUF #(
+		.IBUF_LOW_PWR("FALSE"),
+		.IOSTANDARD  ("LVCMOS33")
+	) ibuf_10m (
+		.O (clk_10m_ibuf),
+		.I (clk_10m)
+	);
+
+	//========================================================================
 	// Register file <-> measurement core
 	//========================================================================
-	wire        ts_en, ts_rst, soft_rst, div4_en;
+	wire        ts_en, ts_rst, soft_rst, div4_en, src_10m;
 	wire [31:0] edge_skip;
 	wire [15:0] pkt_len;
 
@@ -200,6 +229,7 @@
 		.edge_skip     (edge_skip),
 		.pkt_len       (pkt_len),
 		.div4_en       (div4_en),
+		.src_10m       (src_10m),
 
 		.ts_running    (ts_running),
 		.overflow      (overflow),
@@ -216,6 +246,7 @@
 	) counter_core_inst (
 		.clk_fs        (clk_fs),
 		.clk_fx        (clk_fx),
+		.clk_10m       (clk_10m_ibuf),
 		.aclk          (s_axi_aclk),
 		.aresetn       (s_axi_aresetn),
 
@@ -225,6 +256,7 @@
 		.edge_skip     (edge_skip),
 		.pkt_len       (pkt_len),
 		.div4_en       (div4_en),
+		.src_10m       (src_10m),
 
 		.ts_running    (ts_running),
 		.overflow      (overflow),

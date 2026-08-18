@@ -64,6 +64,22 @@ static void set_prescale(u32 ratio)
             (ratio > 1u) ? COUNTER_CORE_PRESCALE_DIV4 : 0u);
 }
 
+/*
+ * Measurement source: the signal under test on clk_fx, or the external 10 MHz
+ * reference on clk_10m.
+ *
+ * Persists in the register file exactly like PRESCALE, and for the same reason
+ * every capture states which source it wants. A leftover SRC_10M is worse than
+ * a leftover DIV4: every subsequent measurement reports 10 MHz, and the
+ * continuity check, the delta statistics and the fit residual all look
+ * perfectly healthy while it does.
+ */
+static void set_src_sel(u32 use_10m)
+{
+    core_wr(COUNTER_CORE_SRC_SEL_OFFSET,
+            use_10m ? COUNTER_CORE_SRC_SEL_10M : 0u);
+}
+
 /*===========================================================================
  * Reference clock calibration (SD card)
  *
@@ -235,6 +251,7 @@ int init_freqcounter(void)
     core_wr(COUNTER_CORE_EDGE_SKIP_OFFSET, 0);
     core_wr(COUNTER_CORE_PKT_LEN_OFFSET, 0);
     set_prescale(1u);
+    set_src_sel(0u);
 
     SetGate(100.0);
 
@@ -698,22 +715,97 @@ double ComputeFreqFromTimestamps(const u64 *buf, int count, u32 f_s)
 }
 
 /*===========================================================================
+ * Timestamp capture and least squares fit
+ *
+ * Shared by the measurement path and the reference calibration. entries and
+ * edge_skip are chosen so the buffer is guaranteed to fill within the gate
+ * time; in simple mode an under-filled buffer would simply time out.
+ *
+ * The caller owns the input configuration -- prescaler and source select --
+ * and passes the ratio it programmed so the result can be scaled back up.
+ * Splitting the register write from the scaling is how you get a reading
+ * exactly 4x off.
+ *
+ * f_expect  roughly what the input is, Hz; only used to size edge_skip
+ * prescale  hardware division the caller already programmed, 1 or
+ *           COUNTER_CORE_PRESCALE_RATIO
+ * f_s       reference frequency the timestamps are counted in
+ * out_freq  fitted input frequency, Hz, written only on success
+ *=========================================================================*/
+static int measure_timestamp_freq(double f_expect, u32 prescale, u32 f_s,
+                                  double *out_freq)
+{
+    int entries, rc, brk;
+    u32 edge_skip, timeout_ms;
+    double expected_edges, freq;
+
+    /* Edges reaching the engine are the divided ones */
+    expected_edges = (f_expect / (double)prescale) * (GATE_TIME / 1000.0);
+
+    if (expected_edges >= (double)TS_BUF_ENTRIES) {
+        /* More edges than the buffer holds: thin them out. The 0.9 margin
+           keeps the buffer filling comfortably before the timeout. */
+        edge_skip = (u32)(expected_edges / ((double)TS_BUF_ENTRIES * 0.9));
+        if (edge_skip > 0) edge_skip -= 1;
+        entries = TS_BUF_ENTRIES;
+    } else {
+        edge_skip = 0;
+        entries = (int)(expected_edges * 0.9);
+    }
+
+    if (entries < TS_MIN_ENTRIES)
+        return TS_ERR_PARAM;    /* signal too slow for a fit within this gate */
+    if (entries > TS_BUF_ENTRIES)
+        entries = TS_BUF_ENTRIES;
+
+    /* Allow three gate times plus slack before giving up */
+    timeout_ms = (u32)(GATE_TIME * 3.0) + 200u;
+
+    rc = CaptureTimestamps(g_ts_buf, entries, edge_skip, timeout_ms);
+
+    if (rc == TS_ERR_OVERFLOW) {
+        /* Dropped edges: back off the rate once and retry */
+        edge_skip = (edge_skip + 1u) * 2u - 1u;
+        rc = CaptureTimestamps(g_ts_buf, entries, edge_skip, timeout_ms);
+    }
+
+    if (rc < 0)
+        return rc;
+
+    brk = VerifyContinuity(g_ts_buf, rc);
+    if (brk >= 0) {
+        /* Fit only the leading contiguous run */
+        xil_printf("[TS] sequence break at %d, fitting first run\r\n", brk);
+        rc = brk;
+        if (rc < TS_MIN_ENTRIES)
+            return TS_ERR_PARAM;
+    }
+
+    freq = ComputeFreqFromTimestamps(g_ts_buf, rc, f_s);
+
+    /* Input periods spanned by one captured interval: edge_skip+1 of the
+       divided signal, each of which is prescale input periods */
+    freq *= (double)(edge_skip + 1u) * (double)prescale;
+
+    if (freq <= 0.0)
+        return TS_ERR_PARAM;
+
+    *out_freq = freq;
+    return TS_OK;
+}
+
+/*===========================================================================
  * Timestamp mode
  *
- * entries and edge_skip are chosen so the buffer is guaranteed to fill within
- * the gate time. In simple mode an under-filled buffer would simply time out.
- *
  * This is the only path that turns the hardware prescaler on, and it owns the
- * whole set of consequences: the decision, the register write, the edge count
- * the divided signal will actually produce, and scaling the result back up.
- * Splitting those apart is how you get a reading exactly 4x off.
+ * whole set of consequences: the decision, the register write, and telling the
+ * fit which ratio to scale back up by.
  *=========================================================================*/
 int ReadFr_TimestampMode(char *Freq)
 {
-    int entries, rc, brk;
-    u32 edge_skip;
-    double expected_edges, freq;
-    u32 f_s, timeout_ms, safe_limit, prescale;
+    int rc;
+    double freq;
+    u32 f_s, safe_limit, prescale;
 
     if (Freq == NULL) return -1;
 
@@ -733,69 +825,123 @@ int ReadFr_TimestampMode(char *Freq)
     safe_limit = (u32)((double)(f_s / 2u) * 0.9);
     prescale = ((u32)FREF > safe_limit) ? COUNTER_CORE_PRESCALE_RATIO : 1u;
     set_prescale(prescale);
+    set_src_sel(0u);
 
-    /* Edges reaching the engine are the divided ones */
-    expected_edges = ((double)FREF / (double)prescale) * (GATE_TIME / 1000.0);
-
-    if (expected_edges >= (double)TS_BUF_ENTRIES) {
-        /* More edges than the buffer holds: thin them out. The 0.9 margin
-           keeps the buffer filling comfortably before the timeout. */
-        edge_skip = (u32)(expected_edges / ((double)TS_BUF_ENTRIES * 0.9));
-        if (edge_skip > 0) edge_skip -= 1;
-        entries = TS_BUF_ENTRIES;
-    } else {
-        edge_skip = 0;
-        entries = (int)(expected_edges * 0.9);
-    }
-
-    if (entries < TS_MIN_ENTRIES) {
-        /* Signal too slow for a meaningful fit within this gate */
-        sprintf(Freq, "0.00000\n");
-        return -1;
-    }
-    if (entries > TS_BUF_ENTRIES)
-        entries = TS_BUF_ENTRIES;
-
-    /* Allow three gate times plus slack before giving up */
-    timeout_ms = (u32)(GATE_TIME * 3.0) + 200u;
-
-    rc = CaptureTimestamps(g_ts_buf, entries, edge_skip, timeout_ms);
-
-    if (rc == TS_ERR_OVERFLOW) {
-        /* Dropped edges: back off the rate once and retry */
-        edge_skip = (edge_skip + 1u) * 2u - 1u;
-        rc = CaptureTimestamps(g_ts_buf, entries, edge_skip, timeout_ms);
-    }
-
+    rc = measure_timestamp_freq((double)FREF, prescale, f_s, &freq);
     if (rc < 0) {
         sprintf(Freq, "0.00000\n");
         return rc;
     }
 
-    brk = VerifyContinuity(g_ts_buf, rc);
-    if (brk >= 0) {
-        /* Fit only the leading contiguous run */
-        xil_printf("[TS] sequence break at %d, fitting first run\r\n", brk);
-        rc = brk;
-        if (rc < TS_MIN_ENTRIES) {
-            sprintf(Freq, "0.00000\n");
-            return -1;
-        }
-    }
-
-    freq = ComputeFreqFromTimestamps(g_ts_buf, rc, f_s);
-
-    /* Input periods spanned by one captured interval: edge_skip+1 of the
-       divided signal, each of which is prescale input periods */
-    freq *= (double)(edge_skip + 1u) * (double)prescale;
-
-    if (freq <= 0.0) {
-        sprintf(Freq, "0.00000\n");
-        return -1;
-    }
-
     sprintf(Freq, "%.5f\n", freq);
     return 0;
+}
+
+/*===========================================================================
+ * Reference clock calibration against the external 10 MHz input
+ *
+ * The timestamp engine always measures a ratio: how many clk_fs periods fit
+ * into one period of the selected input. Normally clk_fs is the known side and
+ * the input is what is being measured. Feeding it a source that is 10 MHz by
+ * definition swaps the two -- the number that comes out is a reading of
+ * clk_fs, and inverting it gives the true reference frequency.
+ *
+ * Nominal values are used throughout rather than GetClkFsFreq(): the result
+ * must not depend on whatever calibration happens to be loaded already, nor on
+ * the position of CTR_STATUS0. Both nominal factors cancel out of the ratio.
+ *=========================================================================*/
+int CalibrateRefClk(void)
+{
+    int rc;
+    double f_meas, f_s_actual, err_ppm;
+    double saved_gate;
+    u32 status0, status1, result;
+
+    /* Both status pins must be high before anything is measured.
+     *
+     * CTR_STATUS0 is the one with a defined meaning here: it selects the
+     * calibrated value over the nominal one in GetClkFsFreq(). Calibrating
+     * with it low would spend a second producing a number the instrument then
+     * ignores, and overwrite the stored one on the way.
+     *
+     * CTR_STATUS1 has no documented meaning in this project; it is treated as
+     * a calibration precondition because the operating procedure says so, not
+     * because anything here knows what it indicates. */
+    status0 = ReadSTATUS0();
+    status1 = ReadSTATUS1();
+
+    if (status0 != 1u || status1 != 1u) {
+        xil_printf("[CAL] refused: CTR_STATUS0=%d CTR_STATUS1=%d, both must be 1\r\n",
+                   (int)status0, (int)status1);
+        return CAL_ERR_PRECOND;
+    }
+
+    /* 10 MHz is far below the Nyquist limit and the hardware bypasses the
+       prescaler on this path regardless; clearing it keeps the two registers
+       consistent with each other. */
+    set_prescale(1u);
+    set_src_sel(1u);
+
+    /* Fixed one second gate rather than whatever GATE_TIME happens to be.
+       measure_timestamp_freq reads the global directly, so it is overridden
+       here and put back below -- the configured gate belongs to the operator
+       and a calibration must not quietly change it. */
+    saved_gate = GATE_TIME;
+    GATE_TIME  = CAL_GATE_TIME_MS;
+
+    rc = measure_timestamp_freq((double)CLK_10M_NOMINAL, 1u, CLK_FS_FREQ,
+                                &f_meas);
+
+    /* Restore the gate and the normal source on every path out. SRC_SEL
+       persists in the register file, and leaving it set would make every
+       later measurement report 10 MHz no matter what is on clk_fx -- passing
+       the continuity check and the fit residual while it does. */
+    GATE_TIME = saved_gate;
+    set_src_sel(0u);
+
+    if (rc < 0) {
+        xil_printf("[CAL] capture failed, rc=%d\r\n", rc);
+        return rc;
+    }
+
+    /* The fit counted the input against a clk_fs assumed to be exactly
+       CLK_FS_FREQ. Here the input is the exact one, so the entire discrepancy
+       belongs to clk_fs:
+     *
+     *     f_meas / CLK_10M_NOMINAL = CLK_FS_FREQ / f_s_actual
+     *
+     * Reading high therefore means clk_fs is running slow. */
+    f_s_actual = (double)CLK_FS_FREQ * (double)CLK_10M_NOMINAL / f_meas;
+    err_ppm    = (f_s_actual - (double)CLK_FS_FREQ) * 1.0e6 / (double)CLK_FS_FREQ;
+
+    /* Range checked on the derived reference, not on the ppm error, so the
+       limits are the two numbers an operator can read off the spec sheet.
+       Only f_meas is printed: it is bounded by clk_fs, whereas f_s_actual can
+       be arbitrarily large when the input is far too slow, and casting that to
+       int for xil_printf would overflow. */
+    if (f_s_actual < CAL_FS_MIN_HZ || f_s_actual > CAL_FS_MAX_HZ) {
+        xil_printf("[CAL] rejected: clk_10m measured %d Hz, implied clk_fs "
+                   "outside %d..%d\r\n",
+                   (int)f_meas, (int)CAL_FS_MIN_HZ, (int)CAL_FS_MAX_HZ);
+        return CAL_ERR_RANGE;
+    }
+
+    result = (u32)(f_s_actual + 0.5);
+
+    /* Apply first, store second: a card that refuses the write should not also
+       cost the measurement that was just made. */
+    g_clk_fs_freq_sd = result;
+
+    xil_printf("[CAL] clk_fs = %d Hz (%d ppb off nominal)\r\n",
+               (int)result, (int)(err_ppm * 1000.0));
+
+    if (SaveClkFsFreq(result) != 0) {
+        xil_printf("[CAL] %s write failed, value applied to this session only\r\n",
+                   CLK_FS_FREQ_FILE);
+        return CAL_ERR_SD;
+    }
+
+    return TS_OK;
 }
 
 /*===========================================================================
@@ -972,6 +1118,7 @@ void TimestampTest(int entries, u32 edge_skip)
 
     /* Diagnostics report the raw input, never a prescaled quarter of it */
     set_prescale(1u);
+    set_src_sel(0u);
 
     xil_printf("---- TimestampTest: %d entries, edge_skip=%lu ----\r\n",
                entries, (unsigned long)edge_skip);
@@ -1194,6 +1341,7 @@ static int tdc_collect_histogram(u32 *hist, int rounds,
        the edge rate by four and, more to the point, PRESCALE may still be set
        from a preceding high-frequency ReadFr(). */
     set_prescale(1u);
+    set_src_sel(0u);
 
     for (i = 0; i < TDC_NUM_TAPS; i++)
         hist[i] = 0;

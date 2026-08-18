@@ -211,6 +211,69 @@ static int cmd_cal_tdc(const char *args, char *resp)
 			"tdc_calib.h block printed on the serial console\n");
 }
 
+/*
+ * The reference frequency the measurement path is using right now, in the same
+ * 53230A scientific format as FREQ:GATE:TIME?.
+ *
+ * This is GetClkFsFreq(), so CTR_STATUS0 decides whether it is the calibrated
+ * value from the SD card or the nominal 312.5 MHz. It answers "what is the
+ * instrument counting against", not "what is stored on the card" -- those
+ * differ whenever CTR_STATUS0 is low.
+ */
+static int cmd_cal_ref_val(const char *args, char *resp)
+{
+	(void)args;
+
+	return scpi_format_53230(resp, (double)GetClkFsFreq());
+}
+
+/*
+ * Prepare the instrument for a reference calibration: route the external
+ * 10 MHz to the counter and away from the PLL.
+ *
+ * With CTR_PRIREF high, the 10 MHz applied for calibration also reaches the
+ * LMK5B12204's PRIREF_P/PRIREF_N inputs and the PLL locks its 312.5 MHz output
+ * to it. Measuring afterwards then returns exactly 312.5 MHz regardless of
+ * what the OCXO is really doing -- the very quantity the calibration exists to
+ * find has been locked away, and the result looks perfectly healthy. Both pins
+ * come up high in init_freqcounter(), so on a freshly booted instrument this
+ * command must precede CAL:REF?.
+ *
+ * Changing the PLL's reference selection takes time to settle, and nothing
+ * here waits for it. Leave a pause before CAL:REF?.
+ */
+static int cmd_cal_ref_prep(const char *args, char *resp)
+{
+	(void)args;
+
+	Set_CTR_REF_CLOCK(1);
+	Set_CTR_PRIREF(0);
+
+	return snprintf(resp, SCPI_RESP_MAX, "1\n");
+}
+
+/*
+ * Measure the external 10 MHz reference on clk_10m, derive the true clk_fs
+ * frequency from it and store that in FREQ.TXT.
+ *
+ * CAL:REF:PREP must have run first, or the PLL is locked to the very signal
+ * being measured and the answer is 312.5 MHz by construction.
+ *
+ * Replies 1 only when the value was derived, passed the range check and
+ * reached the card; anything short of that is 0. The derived frequency and the
+ * reason for a refusal both go to the serial console -- this reply is a yes/no
+ * about whether the instrument is now calibrated, not a measurement result.
+ *
+ * Takes about 1.1 s (fixed 1 s gate) and holds the link while it runs.
+ */
+static int cmd_cal_ref(const char *args, char *resp)
+{
+	(void)args;
+
+	return snprintf(resp, SCPI_RESP_MAX, "%d\n",
+			(CalibrateRefClk() == TS_OK) ? 1 : 0);
+}
+
 //============================================================================
 // Command table
 //============================================================================
@@ -230,6 +293,9 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "SIG:OCXO",         cmd_sig_ocxo              },
 	{ "SIG:STATUS0?",     cmd_sig_status0           },
 	{ "SIG:STATUS1?",     cmd_sig_status1           },
+	{ "CAL:REF:PREP",     cmd_cal_ref_prep          },
+	{ "CAL:REF:VAL?",     cmd_cal_ref_val           },
+	{ "CAL:REF?",         cmd_cal_ref               },
 	{ "CAL:TDC?",         cmd_cal_tdc               },
 };
 

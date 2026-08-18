@@ -29,6 +29,18 @@ create_clock -period 3.200 -name clk_fs [get_ports clk_fs_p]
 create_clock -period 2.857 -name clk_fx [get_ports clk_fx_p]
 
 #-----------------------------------------------------------------------------
+# External 10 MHz reference
+#
+# Nothing in the design is clocked by this pin -- counter_core's source mux
+# hands it to the TDC delay chain and the clk_fs sampler as data, so it needs
+# no BUFG. It is still declared as a clock so the crossing into clk_fs is
+# covered by the asynchronous clock group below; leaving it undeclared would
+# put the whole path outside timing analysis, which is exactly the hole this
+# file was written to close for clk_fs and clk_fx.
+#-----------------------------------------------------------------------------
+create_clock -period 100.000 -name clk_10m [get_ports clk_10m]
+
+#-----------------------------------------------------------------------------
 # Clock groups
 #
 # The three domains are mutually asynchronous. Every crossing inside
@@ -44,6 +56,7 @@ create_clock -period 2.857 -name clk_fx [get_ports clk_fx_p]
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks clk_fs] \
     -group [get_clocks -include_generated_clocks clk_fx] \
+    -group [get_clocks -include_generated_clocks clk_10m] \
     -group [get_clocks -include_generated_clocks clk_fpga_0]
 
 #-----------------------------------------------------------------------------
@@ -95,6 +108,11 @@ set_property IOSTANDARD LVDS_25 [get_ports clk_fs_p]
 set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets ps_i/Counter_Core_0/inst/clk_fx_ibuf]
 set_property PACKAGE_PIN B19 [get_ports clk_fx_p]
 set_property IOSTANDARD LVDS_25 [get_ports clk_fx_p]
+
+#-----------------------------------------------------------------------------
+# External 10 MHz reference clk_10m
+#-----------------------------------------------------------------------------
+set_property -dict {PACKAGE_PIN V5 IOSTANDARD LVCMOS33} [get_ports clk_10m]
 
 #-----------------------------------------------------------------------------
 # Control outputs

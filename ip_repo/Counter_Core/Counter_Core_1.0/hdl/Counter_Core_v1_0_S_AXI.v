@@ -40,6 +40,7 @@
 		output wire [31:0] edge_skip,
 		output wire [15:0] pkt_len,
 		output wire        div4_en,
+		output wire        src_10m,
 
 		// ---- Status inputs (counter_core -> this module) ----
 		input  wire        ts_running,
@@ -109,7 +110,7 @@
 	reg  	axi_rvalid;
 
 	localparam integer ADDR_LSB = (C_S_AXI_DATA_WIDTH/32) + 1;
-	localparam integer OPT_MEM_ADDR_BITS = 3;      // 16 register slots, 9 in use
+	localparam integer OPT_MEM_ADDR_BITS = 3;      // 16 register slots, 10 in use
 
 	//========================================================================
 	// Register addresses (word index = byte offset >> 2)
@@ -126,13 +127,17 @@
 	localparam [3:0] A_VERSION    = 4'hA;   // 0x28 R
 	localparam [3:0] A_PKT_LEN    = 4'hB;   // 0x2C R/W
 	localparam [3:0] A_PRESCALE   = 4'hC;   // 0x30 R/W
+	localparam [3:0] A_SRC_SEL    = 4'hD;   // 0x34 R/W
 
-	// Bumped from 0100 when PRESCALE was added. The check in
-	// init_freqcounter() is an equality test, and that is the point: with new
-	// software on an old bitstream the PRESCALE write lands on an address that
-	// does not decode, so it is silently dropped and every high-frequency
-	// measurement reads 4x low while all the self-check criteria still pass.
-	localparam [31:0] VERSION_MAGIC = 32'h4343_0101;   // "CC" + v1.01
+	// Bumped from 0100 when PRESCALE was added, and again to 0102 for SRC_SEL.
+	// The check in init_freqcounter() is an equality test, and that is the
+	// point: with new software on an old bitstream the new register's write
+	// lands on an address that does not decode, so it is silently dropped.
+	// For PRESCALE that meant every high-frequency measurement reading 4x low;
+	// for SRC_SEL it means the calibration silently measures clk_fx instead of
+	// the 10 MHz reference and writes the resulting nonsense to the SD card.
+	// Both pass every other self-check.
+	localparam [31:0] VERSION_MAGIC = 32'h4343_0102;   // "CC" + v1.02
 
 	//========================================================================
 	// Writable registers
@@ -141,6 +146,7 @@
 	reg [31:0] reg_edge_skip;
 	reg [31:0] reg_pkt_len;
 	reg [31:0] reg_prescale;
+	reg [31:0] reg_src_sel;
 
 	assign ts_en     = reg_ctrl[0];
 	assign ts_rst    = reg_ctrl[1];
@@ -153,6 +159,13 @@
 	// writes CTRL absolutely (core_wr(CTRL, CTRL_TS_EN)), so a bit living there
 	// would be cleared by the capture sequence itself.
 	assign div4_en   = reg_prescale[0];
+
+	// SRC_SEL.SRC_10M: measure the external 10 MHz reference instead of
+	// clk_fx. Same reasoning as PRESCALE for keeping it out of CTRL -- every
+	// CTRL write in the driver is absolute, so the capture sequence itself
+	// would clear the bit, and the calibration would quietly measure whatever
+	// is on the clk_fx input while looking entirely healthy.
+	assign src_10m   = reg_src_sel[0];
 
 	//========================================================================
 	// Read-only status aggregation
@@ -260,6 +273,7 @@
 	      reg_edge_skip <= 32'd0;
 	      reg_pkt_len   <= 32'd0;
 	      reg_prescale  <= 32'd0;
+	      reg_src_sel   <= 32'd0;
 	    end
 	  else if (slv_reg_wren)
 	    begin
@@ -280,6 +294,10 @@
 	          for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
 	            if ( S_AXI_WSTRB[byte_index] == 1 )
 	              reg_prescale[(byte_index*8) +: 8] <= S_AXI_WDATA[(byte_index*8) +: 8];
+	        A_SRC_SEL:
+	          for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
+	            if ( S_AXI_WSTRB[byte_index] == 1 )
+	              reg_src_sel[(byte_index*8) +: 8] <= S_AXI_WDATA[(byte_index*8) +: 8];
 	        default: ;   // read-only and undefined addresses: write ignored, still OKAY
 	      endcase
 	    end
@@ -377,6 +395,7 @@
 	        A_VERSION    : reg_data_out = VERSION_MAGIC;
 	        A_PKT_LEN    : reg_data_out = reg_pkt_len;
 	        A_PRESCALE   : reg_data_out = reg_prescale;
+	        A_SRC_SEL    : reg_data_out = reg_src_sel;
 	        default      : reg_data_out = 32'd0;
 	      endcase
 	end

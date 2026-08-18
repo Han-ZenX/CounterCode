@@ -32,6 +32,7 @@
 #define COUNTER_CORE_VERSION_OFFSET     0x28u   /* R   version magic */
 #define COUNTER_CORE_PKT_LEN_OFFSET     0x2Cu   /* R/W M_AXIS packet length in beats */
 #define COUNTER_CORE_PRESCALE_OFFSET    0x30u   /* R/W input prescaler */
+#define COUNTER_CORE_SRC_SEL_OFFSET     0x34u   /* R/W measurement source select */
 
 /****************** PRESCALE bits ********************/
 /*
@@ -50,6 +51,23 @@
  */
 #define COUNTER_CORE_PRESCALE_DIV4      (1u << 0)
 #define COUNTER_CORE_PRESCALE_RATIO     4u
+
+/****************** SRC_SEL bits ********************/
+/*
+ * SRC_10M measures the external 10 MHz reference on clk_10m instead of the
+ * signal under test. The engine is unchanged: it still times the selected
+ * input against clk_fs. What changes is which side of that ratio is known --
+ * the 10 MHz source is exact by definition, so the fitted result is really a
+ * measurement of clk_fs, and CalibrateRefClk() inverts it to recover the true
+ * reference frequency.
+ *
+ * The prescaler is bypassed on this path in hardware, so PRESCALE is ignored
+ * while this bit is set.
+ *
+ * Same rules as PRESCALE: only change it while CTRL.TS_EN is low, and it is a
+ * register of its own because every CTRL write in the driver is absolute.
+ */
+#define COUNTER_CORE_SRC_SEL_10M        (1u << 0)
 
 /****************** CTRL bits ********************/
 #define COUNTER_CORE_CTRL_TS_EN         (1u << 0)  /* timestamp engine enable */
@@ -77,13 +95,16 @@
 
 #define COUNTER_CORE_TDC_NUM_TAPS       256
 /*
- * Bumped from 0x43430100 when PRESCALE was added. init_freqcounter() tests this
- * for equality, which is the whole point: new software on an old bitstream would
- * write PRESCALE to an address that does not decode, the write would vanish, and
- * every measurement above the Nyquist limit would read 4x low while all the
- * continuity and self-check criteria still passed.
+ * Bumped from 0x43430100 when PRESCALE was added, and to 0x43430102 for
+ * SRC_SEL. init_freqcounter() tests this for equality, which is the whole
+ * point: new software on an old bitstream would write the new register to an
+ * address that does not decode and the write would vanish. For PRESCALE that
+ * meant every measurement above the Nyquist limit reading 4x low; for SRC_SEL
+ * it means the reference calibration measures whatever is on clk_fx instead of
+ * the 10 MHz input and stores the result on the SD card. Both cases pass every
+ * continuity and self-check criterion.
  */
-#define COUNTER_CORE_VERSION_MAGIC      0x43430101u
+#define COUNTER_CORE_VERSION_MAGIC      0x43430102u
 
 /****************** Register access ********************/
 #define COUNTER_CORE_mWriteReg(BaseAddress, RegOffset, Data) \

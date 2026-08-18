@@ -16,6 +16,7 @@
 //
 //   clk_fs   312.5 MHz reference     timestamp coarse count, TDC sampling, gate
 //   clk_fx   signal under test       divide-by-4 prescaler
+//   clk_10m  external 10 MHz ref     data only, no register is clocked by it
 //   aclk     100 MHz FCLK_CLK0       register access, FIFO readout, M_AXIS
 //
 // aclk serves as both s_axi_aclk and m_axis_aclk -- in the BD both are tied to
@@ -43,6 +44,7 @@ module counter_core #(
     //------------------------------------------------------------------
     input  wire        clk_fs,
     input  wire        clk_fx,
+    input  wire        clk_10m,
     input  wire        aclk,
     input  wire        aresetn,
 
@@ -55,6 +57,7 @@ module counter_core #(
     input  wire [31:0] edge_skip,
     input  wire [15:0] pkt_len,
     input  wire        div4_en,
+    input  wire        src_10m,
 
     //------------------------------------------------------------------
     // Status and results (aclk domain)
@@ -162,7 +165,27 @@ module counter_core #(
         else           div_cnt <= div_cnt + 1'b1;
     end
 
-    wire fx_ts = div4_en ? div_cnt[1] : clk_fx;
+    //========================================================================
+    // Measurement source select
+    //
+    // SRC_SEL.SRC_10M swaps the external 10 MHz reference in for clk_fx. The
+    // engine downstream is unchanged: it times whatever arrives here against
+    // clk_fs. What changes is which side of that ratio is known -- with a
+    // source that is exactly 10 MHz by definition, the fitted "frequency" is
+    // really a measurement of clk_fs, and software inverts it to recover the
+    // true reference (see doc/interface_spec.md section 8).
+    //
+    // The prescaler is bypassed on this path rather than muxed after it: at
+    // 10 MHz there is nothing to divide, and feeding clk_10m through div_cnt
+    // would need it to clock a register, which is the one thing this input is
+    // meant not to do. Both selects fold into a single LUT3 in front of the
+    // delay chain, so selecting the 10 MHz source costs no extra logic depth
+    // on the timing critical path.
+    //
+    // Like div4_en, src_10m is used combinationally and is not latched at
+    // capture start, so SRC_SEL must only be changed while TS_EN is low.
+    //========================================================================
+    wire fx_ts = src_10m ? clk_10m : (div4_en ? div_cnt[1] : clk_fx);
 
     //========================================================================
     // Timestamp engine (main path)

@@ -1,7 +1,7 @@
 //Copyright 1986-2018 Xilinx, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2018.3 (win64) Build 2405991 Thu Dec  6 23:38:27 MST 2018
-//Date        : Tue Aug 18 09:42:29 2026
+//Date        : Tue Aug 18 11:09:23 2026
 //Host        : DESKTOP-9L351U0 running 64-bit major release  (build 9200)
 //Command     : generate_target ps_wrapper.bd
 //Design      : ps_wrapper
@@ -37,6 +37,7 @@ module ps_wrapper
     FIXED_IO_ps_clk,
     FIXED_IO_ps_porb,
     FIXED_IO_ps_srstb,
+    clk_10m,
     clk_fs_n,
     clk_fs_p,
     clk_fx_n,
@@ -68,6 +69,7 @@ module ps_wrapper
   inout FIXED_IO_ps_clk;
   inout FIXED_IO_ps_porb;
   inout FIXED_IO_ps_srstb;
+  input clk_10m;
   input clk_fs_n;
   input clk_fs_p;
   input clk_fx_n;
@@ -100,6 +102,7 @@ module ps_wrapper
   wire FIXED_IO_ps_clk;
   wire FIXED_IO_ps_porb;
   wire FIXED_IO_ps_srstb;
+  wire clk_10m;
   wire clk_fs_n;
   wire clk_fs_p;
   wire clk_fx_n;
@@ -133,6 +136,7 @@ module ps_wrapper
         .FIXED_IO_ps_clk(FIXED_IO_ps_clk),
         .FIXED_IO_ps_porb(FIXED_IO_ps_porb),
         .FIXED_IO_ps_srstb(FIXED_IO_ps_srstb),
+        .clk_10m(clk_10m),
         .clk_fs_n(clk_fs_n),
         .clk_fs_p(clk_fs_p),
         .clk_fx_n(clk_fx_n),

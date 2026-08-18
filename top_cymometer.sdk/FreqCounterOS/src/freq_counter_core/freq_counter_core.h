@@ -62,6 +62,36 @@
 #define TDC_NUM_TAPS            COUNTER_CORE_TDC_NUM_TAPS
 
 /*===========================================================================
+ * External 10 MHz reference (clk_10m, pin V5)
+ *
+ * Taken as exact by definition -- that is the whole premise of the
+ * calibration. Whatever the timestamp fit reports for this input is therefore
+ * a measurement of clk_fs, not of the input.
+ *
+ * CAL_FS_MIN_HZ / CAL_FS_MAX_HZ bound the derived reference before it is
+ * stored: 312.49 .. 312.51 MHz, i.e. nominal +/- 32 ppm. An OCXO that far off
+ * is broken rather than uncalibrated, so the window still only rejects cases
+ * that are wrong for a reason: no signal on V5, a signal that is not 10 MHz,
+ * or a bitstream without SRC_SEL that quietly measured clk_fx instead.
+ * Without the check, any of those writes a plausible looking number to the SD
+ * card and every later measurement is wrong by that factor.
+ *=========================================================================*/
+#define CLK_10M_NOMINAL         10000000    /* external reference, Hz */
+#define CAL_FS_MIN_HZ           312490000.0
+#define CAL_FS_MAX_HZ           312510000.0
+
+/*
+ * Gate the calibration runs on, in ms, independent of GATE_TIME.
+ *
+ * Fit precision scales with the time span the samples cover, so a calibration
+ * taken at whatever gate happened to be configured would be ten times worse
+ * whenever the operator had left it at the 100 ms default -- and the number it
+ * produces is not a reading to be repeated, it goes on the SD card and every
+ * later measurement is referred to it. One second is worth spending once.
+ */
+#define CAL_GATE_TIME_MS        1000.0
+
+/*===========================================================================
  * Timestamp DMA buffer
  *
  * 8 bytes per entry. 4096 entries = 32 KB, matching the IP's internal FIFO
@@ -115,6 +145,9 @@
 #define TS_ERR_OVERFLOW         -3      /* hardware reported dropped edges: not gap-free */
 #define TS_ERR_PARAM            -4
 #define TS_ERR_NO_DMA           -5      /* DMA not initialized */
+#define CAL_ERR_RANGE           -6      /* calibration result outside the sanity window */
+#define CAL_ERR_SD              -7      /* derived, applied to this session, but the SD write failed */
+#define CAL_ERR_PRECOND         -8      /* CTR_STATUS0 / CTR_STATUS1 not both high */
 
 /*===========================================================================
  * Globals (referenced directly by scpi.c)
@@ -137,6 +170,26 @@ int  InitTsDma(void);
 u32  LoadClkFsFreq(void);
 int  SaveClkFsFreq(u32 freq);
 u32  GetClkFsFreq(void);
+
+/*
+ * Measure the external 10 MHz reference and derive the true clk_fs frequency
+ * from it, then store that in FREQ.TXT and apply it to this session.
+ *
+ * Requires CTR_STATUS0 and CTR_STATUS1 to both read high, and returns
+ * CAL_ERR_PRECOND without measuring anything if either is low. CTR_STATUS0 is
+ * the pin that selects the calibrated value over the nominal one, so
+ * calibrating with it low would store a number the instrument then ignores.
+ *
+ * Runs on a fixed CAL_GATE_TIME_MS gate, not the configured GATE_TIME, which
+ * it saves and restores. TS_OK means derived, range checked and written to the
+ * card -- everything else is a failure the caller reports as such:
+ * CAL_ERR_RANGE when the result is too far from nominal to be believable,
+ * CAL_ERR_SD when the value is good and took effect for this session but the
+ * card write failed (it will be lost at the next power up), or one of the
+ * TS_ERR_* codes when the capture itself failed. The derived frequency is
+ * printed on the serial console in every case where one was derived at all.
+ */
+int  CalibrateRefClk(void);
 
 /*===========================================================================
  * Counter_Sig control and status

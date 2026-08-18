@@ -12,9 +12,9 @@
 // What this testbench cannot verify
 //
 // The TDC cannot be verified in functional simulation. The CARRY4 behavioral
-// model has zero delay, so all 64 taps flip at the same simulation instant;
-// popcount can only be 0 or 64, tdc_valid is always false, and bits [31:26] of
-// the timestamp stay zero.
+// model has zero delay, so all 256 taps flip at the same simulation instant;
+// popcount can only be 0 or 256, tdc_valid is always false, and bits [31:24]
+// of the timestamp stay zero.
 // Tap delay, linearity and code density must be calibrated by timing
 // simulation (with SDF) or on real hardware.
 //
@@ -28,6 +28,12 @@ module tb_counter_core;
 
     localparam FIFO_AW   = 12;
     localparam FIFO_SIZE = (1 << FIFO_AW);
+
+    // ts_engine declares full at FULL_MARGIN = FIFO_DEPTH - 8, not at the
+    // physical depth: the full flag is two registers stale and the margin
+    // covers that delay. fifo_level therefore tops out eight entries short of
+    // FIFO_SIZE, so "did the FIFO fill" has to compare against this instead.
+    localparam FIFO_FULL_LEVEL = FIFO_SIZE - 8;
 
     //------------------------------------------------------------------
     // Clocks
@@ -52,29 +58,53 @@ module tb_counter_core;
     reg         soft_rst = 1'b0;
     reg [31:0]  edge_skip = 32'd0;
 
+    // Prescaler and source select are both held off so the engine sees clk_fx
+    // straight through. div4_en would quarter the edge rate and src_10m would
+    // swap in clk_10m; either one invalidates COARSE_MIN/COARSE_MAX below.
+    // Both feed the fx_ts mux combinationally, so leaving them unconnected
+    // drives x into every timestamp.
+    wire        div4_en = 1'b0;
+    wire        src_10m = 1'b0;
+    wire        clk_10m = 1'b0;    // unused while src_10m is low
+
+    // 0 is the "unlimited, no TLAST" encoding. Any non-zero value stops the
+    // FIFO pop after that many entries per capture, which would cap the entry
+    // counts that every case below asserts on.
+    wire [15:0] pkt_len = 16'd0;
+
     wire        ts_running, overflow, fifo_empty;
     wire [31:0] ts_count, lost_count;
     wire [FIFO_AW:0] fifo_level;
 
     wire [63:0] ts_data;
     wire        ts_valid;
+    wire        ts_last;
     reg         ts_ready = 1'b1;
+
+    // Exported so the downstream AXI-Stream FIFO is flushed together with the
+    // engine. Nothing downstream here, so it is only observed.
+    wire        stream_aresetn;
 
     counter_core #(
         .FIFO_ADDR_WIDTH (FIFO_AW),
-        .NUM_TAPS        (64)
+        .NUM_TAPS        (256)
     ) dut (
-        .clk_fs (clk_fs), .clk_fx (clk_fx), .aclk (aclk), .aresetn (aresetn),
+        .clk_fs (clk_fs), .clk_fx (clk_fx), .clk_10m (clk_10m),
+        .aclk (aclk), .aresetn (aresetn),
 
         .ts_en (ts_en), .ts_rst (ts_rst),
         .soft_rst (soft_rst), .edge_skip (edge_skip),
+        .pkt_len (pkt_len), .div4_en (div4_en), .src_10m (src_10m),
 
         .ts_running (ts_running), .overflow (overflow),
         .fifo_empty (fifo_empty),
         .ts_count (ts_count), .lost_count (lost_count),
         .fifo_level (fifo_level),
 
-        .ts_data (ts_data), .ts_valid (ts_valid), .ts_ready (ts_ready)
+        .ts_data (ts_data), .ts_valid (ts_valid), .ts_last (ts_last),
+        .ts_ready (ts_ready),
+
+        .stream_aresetn (stream_aresetn)
     );
 
     //------------------------------------------------------------------
@@ -85,7 +115,10 @@ module tb_counter_core;
     integer gap_err  = 0;
     integer errors   = 0;
 
-    reg [23:0] exp_seq     = 24'd0;
+    // Timestamp layout, per ts_engine.v:
+    //   [63:32] coarse  [31:24] tdc  [23] ovf  [22] tdc_ok  [21:0] seq
+    // seq gave up two bits to tdc when the delay chain grew to 256 taps.
+    reg [21:0] exp_seq     = 22'd0;
     reg [31:0] prev_coarse = 32'd0;
     reg        first_word  = 1'b1;
     reg        check_en    = 1'b0;
@@ -102,9 +135,9 @@ module tb_counter_core;
             if (check_en) begin
                 // Sequence numbers must be strictly contiguous -- the core
                 // criterion for gap-free
-                if (ts_data[23:0] !== exp_seq) begin
+                if (ts_data[21:0] !== exp_seq) begin
                     $display("[ERR] t=%0t seq break: got %0d, expected %0d",
-                             $time, ts_data[23:0], exp_seq);
+                             $time, ts_data[21:0], exp_seq);
                     seq_err = seq_err + 1;
                 end
 
@@ -119,7 +152,7 @@ module tb_counter_core;
                 end
             end
 
-            exp_seq     = ts_data[23:0] + 24'd1;
+            exp_seq     = ts_data[21:0] + 22'd1;
             prev_coarse = ts_data[63:32];
             first_word  = 1'b0;
         end
@@ -173,6 +206,13 @@ module tb_counter_core;
 
         //--------------------------------------------------------------
         // Case 2: backpressure fills the FIFO, check overflow and lost_count
+        //
+        // ts_en stays high for the whole case. counter_core drives
+        // ts_engine's stream_en from ts_en, so dropping it stops the FIFO pop
+        // outright and the backlog could never drain. That gating is
+        // deliberate -- it is what keeps a finished capture from spilling
+        // stale entries into the downstream buffers -- so the drain has to be
+        // observed with the capture still enabled.
         //--------------------------------------------------------------
         $display("\n-- Case 2: backpressure overflow --");
         ts_rst = 1'b1; #100; ts_rst = 1'b0; #100;
@@ -185,7 +225,6 @@ module tb_counter_core;
         // Instead observe fifo_level growth and eventual overflow, allowing
         // generous time.
         #500000;                // 500 us
-        ts_en = 1'b0;
         #2000;
 
         $display("   fifo_level=%0d, ts_count=%0d, lost=%0d, overflow=%b",
@@ -194,7 +233,7 @@ module tb_counter_core;
             $display("[ERR] FIFO should have backlog under backpressure");
             errors = errors + 1;
         end
-        if (fifo_level >= FIFO_SIZE) begin
+        if (fifo_level >= FIFO_FULL_LEVEL) begin
             // If it really did fill, overflow must be reported
             if (overflow !== 1'b1 || lost_count === 32'd0) begin
                 $display("[ERR] FIFO full but overflow not reported");
@@ -206,16 +245,23 @@ module tb_counter_core;
             $display("   note: FIFO did not fill within sim time, overflow path uncovered");
         end
 
-        // Resume consuming and confirm the backlog drains
+        // Resume consuming and confirm the backlog drains. The writer is
+        // still running at 10 MHz while the reader pops at 100 MHz, so the
+        // steady state is an almost empty FIFO rather than a strictly empty
+        // one -- sampling fifo_empty at a single instant would race the next
+        // write, hence the small-level check instead.
         rx_before = rx_cnt;
         ts_ready = 1'b1;
         #200000;
         $display("   drained %0d more entries, fifo_level=%0d",
                  rx_cnt - rx_before, fifo_level);
-        if (fifo_empty !== 1'b1) begin
-            $display("[ERR] fifo_empty should be 1 after draining");
+        if (fifo_level > 8) begin
+            $display("[ERR] backlog did not drain, fifo_level=%0d", fifo_level);
             errors = errors + 1;
         end
+
+        ts_en = 1'b0;
+        #2000;
 
         //--------------------------------------------------------------
         // Case 3: edge_skip active, sequence must stay contiguous
