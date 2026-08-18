@@ -152,6 +152,25 @@ static int cmd_gate_time(const char *args, char *resp)
 }
 
 /*
+ * Allowed frequency deviation in ppm. Stored only -- nothing in the
+ * measurement path reads PPM_RANGE yet.
+ *
+ * The query answers in the same 53230A scientific format as FREQ:GATE:TIME?.
+ */
+static int cmd_ppm_query(const char *args, char *resp)
+{
+	(void)args;
+	return scpi_format_53230(resp, PPM_RANGE);
+}
+
+static int cmd_ppm(const char *args, char *resp)
+{
+	(void)resp;
+	PPM_RANGE = atof(args);
+	return 0;
+}
+
+/*
  * The three SIG:* setters share one shape: a single 0/1 argument acknowledged
  * with "1". Anything else is ignored without a response, as before.
  */
@@ -288,6 +307,8 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "CONF:FREQ",        cmd_conf_freq             },
 	{ "FREQ:GATE:TIME?",  cmd_gate_time_query       },
 	{ "FREQ:GATE:TIME",   cmd_gate_time             },
+	{ "PPM?",             cmd_ppm_query             },
+	{ "PPM",              cmd_ppm                   },
 	{ "SIG:PRIREF",       cmd_sig_priref            },
 	{ "SIG:REFCLOCK",     cmd_sig_refclock          },
 	{ "SIG:OCXO",         cmd_sig_ocxo              },

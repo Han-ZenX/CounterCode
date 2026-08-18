@@ -17,6 +17,7 @@
  *=========================================================================*/
 int    FREF            = 1000000;   /* 1 MHz */
 double GATE_TIME       = 100.0;     /* ms */
+double PPM_RANGE       = 0.0;       /* ppm, reserved: not used yet */
 
 u32 g_clk_fs_freq    = CLK_FS_FREQ;
 u32 g_clk_fs_freq_sd = CLK_FS_FREQ;

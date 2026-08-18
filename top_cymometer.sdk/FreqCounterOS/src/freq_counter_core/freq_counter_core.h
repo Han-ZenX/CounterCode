@@ -154,6 +154,7 @@
  *=========================================================================*/
 extern int    FREF;                 /* expected/reference frequency, Hz */
 extern double GATE_TIME;            /* gate duration, ms */
+extern double PPM_RANGE;            /* allowed deviation, ppm; set over SCPI, not used yet */
 
 extern u32 g_clk_fs_freq;
 extern u32 g_clk_fs_freq_sd;
