@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-基于 Xilinx Zynq-7000 的高精度频率计。PL 侧用 Verilog 实现测频核心（等精度计数 + TDC 亚周期插值 + 时间戳引擎），PS 侧运行 FreeRTOS + lwIP，通过 TCP 提供 SCPI 风格的命令接口。
+基于 Xilinx Zynq-7000 的高精度频率计。PL 侧用 Verilog 实现测频核心（时间戳引擎 + TDC 亚周期插值），PS 侧运行 FreeRTOS + lwIP，通过 TCP 提供 SCPI 风格的命令接口。
 
 | 项目 | 值 |
 |------|------|
@@ -66,8 +66,6 @@ hdl/Counter_Core_v1_0.v             顶层：IBUFDS + BUFG 接收 LVDS 差分时
 ├── src/counter_core.v              测量核心互连，统一三个时钟域的复位与 CDC
 │   ├── src/ts_engine.v             gap-free 时间戳引擎 + 4096 深异步 FIFO
 │   │   └── src/tdc.v               CARRY4 延迟链 TDC
-│   ├── src/eq_counter.v            等精度计数 + 硬件闸门（保留，仅 START_T 与诊断）
-│   │   └── src/tdc.v
 │   └── src/cdc.v                   复位同步 / 电平同步 / 计数器跨域
 └── hdl/Counter_Core_v1_0_M_AXIS.v  64 位时间戳流 → axis_data_fifo → DMA
 ```
@@ -76,7 +74,6 @@ hdl/Counter_Core_v1_0.v             顶层：IBUFDS + BUFG 接收 LVDS 差分时
 
 - **测量逻辑从 S_AXI 中剥离**。旧版把 `top_cymometer` 实例化在 S_AXI 内部，
   1505 行里 1300 行是模板生成的 100 个通用寄存器，实际只用了十几个
-- **闸门由硬件定时**。`GATE_LEN` 是真实的 `clk_fs` 计数器预置值，不再靠软件 `usleep`
 - **时间戳经 DMA 连续流出**，不再逐条轮询 FIFO
 
 > `ip_repo/Counter/Counter_1.0/` 是被 `Counter_Core` 取代的上一版 IP，已从 BD 中移除。
@@ -96,8 +93,8 @@ FreqCounterOS/src/
 ├── freertos_tcp_perf_server.c          TCP 服务器 + 命令解析 (tcp_data_process)
 ├── scpi/scpi.c                         SCPI 命令表与分发
 ├── freq_counter_core/                  测频层（对接 Counter_Core，当前使用）
-│   ├── freq_counter_core.c             等精度 / DMA 时间戳 / 回归 / SD 卡校准
-│   └── freq_counter_core.h             寄存器映射、时间戳字段宏、TDC 开关
+│   ├── freq_counter_core.c             DMA 时间戳 / 回归 / SD 卡校准
+│   └── freq_counter_core.h             寄存器映射、时间戳字段宏
 ├── freq_counter/                       旧测频层（对接已移除的 Counter IP，不参与编译）
 ├── uart/uart.c                         UART 中断驱动与命令解析（当前未接入，见「已知问题」）
 ├── iic_phyreset.c                      PHY 复位（可选）
@@ -110,7 +107,6 @@ FreqCounterOS/src/
 ## 测量原理
 
 测频统一走 gap-free 连续时间戳；超奈奎斯特频段靠硬件四分频进入同一条路径。
-等精度计数保留但不再用于测频。
 
 ### 1. 时间戳引擎（主路径）
 
@@ -134,21 +130,7 @@ gap-free 的语义是"要么一条不丢，要么明确告诉你丢在哪"：每
 
 99 MHz 下 `edge_skip=0` 不可行（792 MB/s 超 HP0 带宽），见「已知问题 2.2」。
 
-### 2. 等精度计数（保留，不用于测频）
-
-`eq_counter.v`。闸门由 `clk_fs` 域硬件计数器产生，宽度精确等于 `GATE_LEN`
-个基准时钟周期 —— 不再依赖软件 `usleep`，基准侧因此没有 ±1 量化误差
-（`EQ_STAND` 恒等于 `GATE_LEN`，可作自检）。
-
-被测侧计数经三级同步器，用 TDC 校正闸门两端的亚周期相位：
-
-```
-f_test = f_s × (EQ_TEST + tdc_rise/256 - tdc_fall/256) / EQ_STAND
-```
-
-实测：100 ms 闸门 **0.029 ppm**，恰为 ±1 计数的理论极限。
-
-### 3. TDC 亚周期插值
+### 2. TDC 亚周期插值
 
 `tdc.v` 用 CARRY4 进位延迟链，采样后统计温度计码中 1 的个数
 （popcount，天然免疫气泡码；优先编码器会锁到气泡上）。
@@ -159,8 +141,6 @@ f_test = f_s × (EQ_TEST + tdc_rise/256 - tdc_fall/256) / EQ_STAND
 
 但 64 抽头总跨度仅 1.35 ns，只覆盖 3.2 ns 基准周期的 42%，其余样本饱和，
 故延迟链已加长至 **256 抽头**（`tdc_value` 8 位，流水线 5 级）。
-等精度路径的 TDC 校正在 256 抽头版上板验证前仍默认关闭
-（`TDC_CORRECTION_ENABLED = 0`）。
 
 推导过程与数据见 [interface_spec.md 第 7 节](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
 
@@ -179,9 +159,8 @@ FREF <= safe_limit  →  PRESCALE.DIV4 = 0，直接送引擎
 固定延迟，而该延迟在最小二乘斜率里完全抵消。上限与约束见
 [interface_spec.md 3.4](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
 
-等精度法已从分派中移除：它的不确定度就是 ±1 计数，350 MHz / 100 ms 闸门为 0.029 ppm，
-而时间戳法同闸门可达 0.00004 ppm。`ReadFr_EqualPrecision()` 保留给 START_T、
-重复性诊断和分频通路的交叉验证。
+等精度法及其闸门 TDC 校正已整体删除：它的不确定度就是 ±1 计数，350 MHz / 100 ms 闸门为 0.029 ppm，
+而时间戳法同闸门可达 0.00004 ppm。
 
 时间戳法按 `GATE_TIME` 自适应设置 `edge_skip`，让 4096 条样本铺满整个闸门时间。
 
@@ -233,15 +212,12 @@ GW=192.168.1.1
 
 | 偏移 | 名称 | 访问 | 功能 |
 |------|------|------|------|
-| 0x00 | `CTRL` | R/W | bit0 `TS_EN` / bit1 `TS_RST` / bit2 `EQ_START`（上升沿触发）/ bit3 `SOFT_RST` |
-| 0x04 | `STATUS` | R | bit0 运行中 / bit1 溢出（粘滞）/ bit2 等精度完成 / bit3 闸门开启 / bit4 FIFO 空 |
+| 0x00 | `CTRL` | R/W | bit0 `TS_EN` / bit1 `TS_RST` / bit3 `SOFT_RST` |
+| 0x04 | `STATUS` | R | bit0 运行中 / bit1 溢出（粘滞）/ bit4 FIFO 空 |
 | 0x08 | `EDGE_SKIP` | R/W | 每 N+1 个边沿采一条，0 = 每个都采 |
 | 0x0C | `TS_COUNT` | R | 已写入 FIFO 的时间戳总数 |
 | 0x10 | `LOST_COUNT` | R | 因 FIFO 满丢弃的边沿数，gap-free 成立时恒为 0 |
-| 0x14 | `GATE_LEN` | R/W | 闸门长度，单位 `clk_fs` 周期（硬件定时器预置值） |
-| 0x18 | `EQ_STAND` | R | 等精度基准计数，正常恒等于 `GATE_LEN` |
-| 0x1C | `EQ_TEST` | R | 等精度被测计数 |
-| 0x20 | `TDC_GATE` | R | [7:0] 闸门上升沿相位，[15:8] 下降沿相位 |
+| 0x14 | — | — | 保留（原 `GATE_LEN`/`EQ_STAND`/`EQ_TEST`/`TDC_GATE`，等精度已删除，读作 0） |
 | 0x24 | `FIFO_LEVEL` | R | FIFO 中未取走的条目数 |
 | 0x28 | `VERSION` | R | 魔数 `0x43430101` |
 | 0x2C | `TS_PKT_LEN` | R/W | M_AXIS 包长（拍）。**必须等于 DMA buffer 条数，填 0 会导致传输永不结束** |
@@ -333,7 +309,7 @@ CounterCode/
 ├── ip_repo/
 │   ├── Counter_Core/Counter_Core_1.0/   测频 IP（当前使用）
 │   │   ├── hdl/                         AXI 接口层（顶层 / S_AXI / M_AXIS）
-│   │   ├── src/                         测量核心（counter_core / ts_engine / eq_counter / tdc / cdc）
+│   │   ├── src/                         测量核心（counter_core / ts_engine / tdc / cdc）
 │   │   ├── sim/tb_counter_core.v        testbench
 │   │   ├── doc/interface_spec.md        接口规范 + 实测标定
 │   │   └── package_ip.tcl               重新打包脚本
@@ -459,8 +435,8 @@ RAM 浅深度配置），几乎不提供缓冲，建议改 BRAM 模式并加深�
 
 ### 5. 部分命令无响应
 
-TCP 路径下 `*RST`、`*OPC?`、`CONF:FREQ <值>`、`FREQ:GATE:TIME <值>`、
-`START:GATE:TIME <值>`、`PPM <值>`、`INIT` 执行后不向客户端写回任何数据。
+TCP 路径下 `*RST`、`*OPC?`、`CONF:FREQ <值>`、`FREQ:GATE:TIME <值>`
+执行后不向客户端写回任何数据。
 上位机若按「每条命令必有响应」的假设实现会超时。
 
 ### 6. UART 接口未接入
@@ -485,8 +461,6 @@ TCP 路径下 `*RST`、`*OPC?`、`CONF:FREQ <值>`、`FREQ:GATE:TIME <值>`、
 
 | 原问题 | 处理 |
 |--------|------|
-| 闸门参数寄存器未接硬件，闸门靠 `usleep` | `GATE_LEN` 接入硬件计数器，`EQ_STAND` 恒等于 `GATE_LEN` |
-| `INIT` 无超时忙等 | `InitStartT()` 加 10 s 触发等待上限，等精度轮询加超时 |
 | DMA 通路两端未实现 | M_AXIS 接真实时间戳流，软件走 `XAxiDma` simple mode |
 | 时间戳靠 AXI-Lite 逐条轮询 | 改 DMA 直入 DDR，4096 条 819 μs |
 | 边沿检测方向与命名相反 | 修正为上升沿 |

@@ -151,19 +151,6 @@ static int cmd_gate_time(const char *args, char *resp)
 	return 0;
 }
 
-static int cmd_start_gate_time_query(const char *args, char *resp)
-{
-	(void)args;
-	return snprintf(resp, SCPI_RESP_MAX, "%.3f\n", START_GATE_TIME);
-}
-
-static int cmd_start_gate_time(const char *args, char *resp)
-{
-	(void)resp;
-	START_GATE_TIME = atof(args) * 1000.0;
-	return 0;
-}
-
 /*
  * The three SIG:* setters share one shape: a single 0/1 argument acknowledged
  * with "1". Anything else is ignored without a response, as before.
@@ -204,37 +191,6 @@ static int cmd_sig_status1(const char *args, char *resp)
 	return snprintf(resp, SCPI_RESP_MAX, "%d\n", ReadSTATUS1() ? 1 : 0);
 }
 
-static int cmd_ppm_query(const char *args, char *resp)
-{
-	(void)args;
-	return snprintf(resp, SCPI_RESP_MAX, "%d\n", PPM);
-}
-
-static int cmd_ppm(const char *args, char *resp)
-{
-	(void)resp;
-	PPM = atoi(args);
-	return 0;
-}
-
-static int cmd_init(const char *args, char *resp)
-{
-	(void)args;
-	(void)resp;
-	InitStartT(NULL);
-	return 0;
-}
-
-static int cmd_read_time(const char *args, char *resp)
-{
-	(void)args;
-
-	while (START_T_END != 1)
-		;
-
-	return snprintf(resp, SCPI_RESP_MAX, "%.3f\n", START_T_TIME);
-}
-
 /*
  * Re-measure the TDC delay chain and print a replacement for the table in
  * tdc_calib.h, to be pasted in and rebuilt.
@@ -263,23 +219,17 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "*IDN?",            cmd_idn                   },
 	{ "*RST",             cmd_noop                  },
 	{ "*OPC?",            cmd_noop                  },
-	{ "READ:TIME?",       cmd_read_time             },
 	{ "READ?",            cmd_read_freq             },
 	{ "MEAS:FREQ?",       cmd_read_freq             },
 	{ "CONF:FREQ?",       cmd_conf_freq_query       },
 	{ "CONF:FREQ",        cmd_conf_freq             },
 	{ "FREQ:GATE:TIME?",  cmd_gate_time_query       },
 	{ "FREQ:GATE:TIME",   cmd_gate_time             },
-	{ "START:GATE:TIME?", cmd_start_gate_time_query },
-	{ "START:GATE:TIME",  cmd_start_gate_time       },
 	{ "SIG:PRIREF",       cmd_sig_priref            },
 	{ "SIG:REFCLOCK",     cmd_sig_refclock          },
 	{ "SIG:OCXO",         cmd_sig_ocxo              },
 	{ "SIG:STATUS0?",     cmd_sig_status0           },
 	{ "SIG:STATUS1?",     cmd_sig_status1           },
-	{ "PPM?",             cmd_ppm_query             },
-	{ "PPM",              cmd_ppm                   },
-	{ "INIT",             cmd_init                  },
 	{ "CAL:TDC?",         cmd_cal_tdc               },
 };
 

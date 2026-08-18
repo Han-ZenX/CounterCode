@@ -60,12 +60,11 @@
  * accurate option whenever the phase does sweep.
  *
  *---------------------------------------------------------------------------
- * NOT covered by this table
+ * Scope
  *
- * eq_counter/u_tdc_test is a separate physical chain (SLICE_X58Y75..Y90) with
- * its own bin distribution, and it is clocked by clk_fx rather than clk_fs, so
- * its full scale is the period of the signal under test, not a constant. It
- * has no calibration data yet. Do not use this table for it.
+ * The table describes ts_engine/u_tdc, the only TDC chain left in the design.
+ * The equal-precision chain (eq_counter/u_tdc_test) that this note used to
+ * exclude was deleted along with the equal-precision path on 2026-08-18.
  *=========================================================================*/
 
 /*

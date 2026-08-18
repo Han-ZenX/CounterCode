@@ -16,11 +16,7 @@
  * Globals
  *=========================================================================*/
 int    FREF            = 1000000;   /* 1 MHz */
-int    PPM             = 0;
 double GATE_TIME       = 100.0;     /* ms */
-double START_GATE_TIME = 0.1;       /* ms */
-double START_T_TIME    = 0.0;
-int    START_T_END     = 0;
 
 u32 g_clk_fs_freq    = CLK_FS_FREQ;
 u32 g_clk_fs_freq_sd = CLK_FS_FREQ;
@@ -58,9 +54,6 @@ static inline u32 core_rd(u32 off)
  * calls. Without that, one high-frequency ReadFr() would leave the divider on
  * and every later capture -- including the TDC calibration runs -- would quietly
  * measure a quarter of the input while looking perfectly healthy.
- *
- * The equal-precision path is unaffected either way: eq_counter clocks on the
- * raw clk_fx and never sees the prescaler.
  *
  * Must be written before CTRL.TS_EN goes high: the divider select is
  * combinational in the RTL, not latched at capture start the way EDGE_SKIP is.
@@ -181,11 +174,6 @@ u32 ReadSTATUS1(void)
     return COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR, COUNTER_SIG_REG1);
 }
 
-u32 ReadSTARTT(void)
-{
-    return COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR, COUNTER_SIG_REG2);
-}
-
 /*===========================================================================
  * Init
  *=========================================================================*/
@@ -228,10 +216,6 @@ int init_freqcounter(void)
     LoadClkFsFreq();
 
     FREF            = 1000000;
-    PPM             = 0;
-    START_T_TIME    = 0.0;
-    START_T_END     = 0;
-    START_GATE_TIME = 0.1;
 
     /* Confirm the IP is present and the address map is right before anything
        else touches it */
@@ -277,11 +261,6 @@ int init_freqcounter(void)
      * The engine must only run with a transfer armed. TimestampTest does that
      * correctly and reports far more anyway.
      */
-    DumpCoreStatus();
-
-    //RepeatTest(20, 31250000);
-
-    //RepeatTest(20, 312500);
 
     TimestampTest(4096, 0);
     TimestampTest(4096, 0);
@@ -313,146 +292,15 @@ int init_freqcounter(void)
 /*===========================================================================
  * Gate configuration
  *
- * The old SetGate() computed cntgatemax/cntgatelow and wrote REG5/REG6, which
- * were never wired to anything in the HDL. GATE_LEN is now a real hardware
- * counter preload, expressed in clk_fs periods.
+ * GATE_LEN was a hardware counter preload for the equal-precision gate, which
+ * no longer exists. What remains is GATE_TIME, the span the timestamp path
+ * uses when sizing edge_skip.
  *=========================================================================*/
 int SetGate(double msec)
 {
-    u32 f_s, gate_len;
-
     if (msec <= 0.0) return -1;
 
     GATE_TIME = msec;
-    f_s = GetClkFsFreq();
-
-    gate_len = (u32)((double)f_s * msec / 1000.0);
-    if (gate_len == 0) gate_len = 1;
-
-    core_wr(COUNTER_CORE_GATE_LEN_OFFSET, gate_len);
-    return 0;
-}
-
-/*===========================================================================
- * Equal-precision mode
- *
- * Used above the clk_fs Nyquist limit, where per-edge timestamping is not
- * possible.
- *=========================================================================*/
-static int RunEqualPrecision(u32 gate_len, u32 *stand, u32 *test, u32 *tdcw)
-{
-    int timeout_ms;
-    double gate_ms;
-    u32 f_s = GetClkFsFreq();
-
-    if (gate_len == 0 || f_s == 0) return -1;
-
-    core_wr(COUNTER_CORE_GATE_LEN_OFFSET, gate_len);
-
-    /* EQ_START is edge triggered in hardware (eq_go = eq_start & ~eq_start_d),
-       so it must be driven high then back low or a second measurement will
-       never start. */
-    core_wr(COUNTER_CORE_CTRL_OFFSET, COUNTER_CORE_CTRL_EQ_START);
-    usleep(10);
-    core_wr(COUNTER_CORE_CTRL_OFFSET, 0);
-
-    gate_ms = (double)gate_len * 1000.0 / (double)f_s;
-    timeout_ms = (int)(gate_ms * 3.0) + 100;
-
-    while (!(core_rd(COUNTER_CORE_STATUS_OFFSET) & COUNTER_CORE_STAT_EQ_DONE)) {
-        if (--timeout_ms <= 0) {
-            /* Never busy-wait without a bound: a missing input signal would
-               otherwise pin the CPU and block the TCP connection. */
-            return -1;
-        }
-        usleep(1000);
-    }
-
-    *stand = core_rd(COUNTER_CORE_EQ_STAND_OFFSET);
-    *test  = core_rd(COUNTER_CORE_EQ_TEST_OFFSET);
-    *tdcw  = core_rd(COUNTER_CORE_TDC_GATE_OFFSET);
-
-    return 0;
-}
-
-/*===========================================================================
- * Effective test count
- *
- * Single point where the TDC correction is applied, so the
- * TDC_CORRECTION_ENABLED switch cannot be honoured in one place and missed
- * in another. See the switch definition in the header for why it currently
- * defaults to off.
- *=========================================================================*/
-static double eq_effective_count(u32 test, u32 tdcw)
-{
-    /* The /TDC_NUM_TAPS below is wrong and is why this stays disabled.
-     *
-     * This TDC is clocked by clk_fx, not clk_fs, so its full scale is the
-     * period of the signal under test -- a moving target -- while the chain
-     * is a fixed 4750 ps of silicon. Dividing by the code count silently
-     * asserts the two are equal, which holds only near f_test = 210 MHz.
-     * Below that the chain cannot span a period at all (at 5 MHz it covers
-     * 2.4% and nearly every reading saturates); above it, only part of the
-     * codes are reachable and the scale is off by that fraction.
-     *
-     * The fix needs two things, neither of which exists yet for this chain:
-     *   - its own code density table. eq_counter/u_tdc_test is a different
-     *     physical chain (SLICE_X58Y75..Y90) from the one tdc_calib.h
-     *     describes, with its own bin widths.
-     *   - normalising by the real period instead of the code count:
-     *         t_fx_ps = 1e12 / (f_s * test / stand)
-     *         eff = test + (phase[rise] - phase[fall]) / t_fx_ps
-     *     which means this function also needs stand and f_s.
-     *
-     * Calibrating it is practical despite one gate yielding only one reading:
-     * shorten GATE_LEN to a few thousand clk_fs cycles and the sample rate
-     * goes from 10/s to tens of thousands per second.
-     */
-#if TDC_CORRECTION_ENABLED
-    double eff = (double)test
-               + (double)COUNTER_CORE_TDC_RISE(tdcw) / (double)TDC_NUM_TAPS
-               - (double)COUNTER_CORE_TDC_FALL(tdcw) / (double)TDC_NUM_TAPS;
-
-    /* A correction large enough to drive the count non-positive means the
-       TDC values are garbage; fall back to the raw count. */
-    return (eff > 0.0) ? eff : (double)test;
-#else
-    (void)tdcw;
-    return (double)test;
-#endif
-}
-
-int ReadFr_EqualPrecision(char *Freq)
-{
-    u32 f_s, gate_len, stand, test, tdcw;
-    double eff_test, fr;
-
-    if (Freq == NULL) return -1;
-
-    f_s = GetClkFsFreq();
-    gate_len = (u32)((double)f_s * GATE_TIME / 1000.0);
-
-    if (RunEqualPrecision(gate_len, &stand, &test, &tdcw) != 0) {
-        sprintf(Freq, "0.00000\n");
-        return -1;
-    }
-
-    if (stand == 0) {
-        sprintf(Freq, "0.00000\n");
-        return -1;
-    }
-
-    /* stand should equal gate_len exactly; a mismatch means the gate logic
-       misbehaved and is worth surfacing */
-    if (stand != gate_len)
-        xil_printf("[EQ] gate mismatch: stand=%lu gate_len=%lu\r\n",
-                   (unsigned long)stand, (unsigned long)gate_len);
-
-    eff_test = eq_effective_count(test, tdcw);
-
-    fr = (double)f_s * eff_test / (double)stand;
-
-    sprintf(Freq, "%.5f\n", fr);
     return 0;
 }
 
@@ -956,98 +804,10 @@ int ReadFr_TimestampMode(char *Freq)
  * There is only one measurement path now. Above the Nyquist limit the input is
  * divided by 4 in hardware and the timestamp engine keeps working, which
  * ReadFr_TimestampMode handles on its own.
- *
- * Equal-precision used to take over above the limit. It was dropped because it
- * has nothing to offer: its uncertainty is the +/-1 count, 1/(f_x * T_gate),
- * which is 0.029 ppm at 350 MHz with a 100 ms gate -- exactly the figure
- * measured on hardware, meaning the TDC correction that was supposed to improve
- * on it never contributed anything (the gate TDC values are still not
- * trustworthy, see interface_spec.md 7.2). The timestamp fit reaches
- * 0.00004 ppm over the same gate.
- *
- * ReadFr_EqualPrecision itself stays: ReadStartT and RepeatTest use it, and it
- * is the independent cross-check for the prescaled path.
  *=========================================================================*/
 int ReadFr(char *Freq)
 {
     return ReadFr_TimestampMode(Freq);
-}
-
-/*===========================================================================
- * START_T support
- *
- * Short-gate measurement used to time how long the source takes to settle
- * within PPM of the expected frequency.
- *=========================================================================*/
-double ReadStartT(char *Freq)
-{
-    u32 f_s, gate_len, stand, test, tdcw;
-    double eff_test, fr;
-
-    f_s = GetClkFsFreq();
-    gate_len = (u32)((double)f_s * START_GATE_TIME / 1000.0);
-    if (gate_len == 0) gate_len = 1;
-
-    if (RunEqualPrecision(gate_len, &stand, &test, &tdcw) != 0 || stand == 0) {
-        if (Freq) sprintf(Freq, "0.00000\n");
-        return 0.0;
-    }
-
-    eff_test = eq_effective_count(test, tdcw);
-
-    fr = (double)f_s * eff_test / (double)stand;
-
-    if (Freq) sprintf(Freq, "%.5f\n", fr);
-    return fr;
-}
-
-void InitStartT(void *p)
-{
-    int i;
-    int wait_ms;
-    double freq, fref_scaled, ppm_err, elapsed = 0.0;
-    char resp[64];
-
-    (void)p;
-
-    START_T_TIME = 0.0;
-    START_T_END  = 0;
-
-    /* Wait for the external trigger, but bounded. The original implementation
-       used a bare while(1) with no timeout and no sleep, which pinned the CPU
-       and blocked the owning TCP connection indefinitely when the trigger
-       never arrived. */
-    wait_ms = 10000;
-    while (ReadSTARTT() != 1) {
-        if (--wait_ms <= 0) {
-            START_T_TIME = 0.0;
-            START_T_END  = 1;
-            xil_printf("[STARTT] trigger timeout\r\n");
-            return;
-        }
-        usleep(1000);
-    }
-
-    fref_scaled = (double)FREF * 4.0;
-
-    for (i = 0; i < 1000; i++) {
-        freq = ReadStartT(resp) * 4.0;
-
-        elapsed = (START_GATE_TIME + 0.02) * (double)(i + 1);
-
-        if (fref_scaled > 0.0) {
-            ppm_err = (freq - fref_scaled) / fref_scaled * 1000000.0;
-
-            if (ppm_err >= -(double)PPM && ppm_err <= (double)PPM) {
-                START_T_TIME = elapsed;
-                START_T_END  = 1;
-                return;
-            }
-        }
-    }
-
-    START_T_TIME = elapsed;
-    START_T_END  = 1;
 }
 
 /*===========================================================================
@@ -1060,20 +820,14 @@ void DumpCoreStatus(void)
     xil_printf("---- Counter_Core status ----\r\n");
     xil_printf(" VERSION    0x%08x\r\n", (unsigned int)core_rd(COUNTER_CORE_VERSION_OFFSET));
     xil_printf(" CTRL       0x%08x\r\n", (unsigned int)core_rd(COUNTER_CORE_CTRL_OFFSET));
-    xil_printf(" STATUS     0x%08x  [run=%d ovf=%d eqdone=%d eqbusy=%d empty=%d]\r\n",
+    xil_printf(" STATUS     0x%08x  [run=%d ovf=%d empty=%d]\r\n",
                (unsigned int)status,
                (status & COUNTER_CORE_STAT_TS_RUNNING) ? 1 : 0,
                (status & COUNTER_CORE_STAT_OVERFLOW)   ? 1 : 0,
-               (status & COUNTER_CORE_STAT_EQ_DONE)    ? 1 : 0,
-               (status & COUNTER_CORE_STAT_EQ_BUSY)    ? 1 : 0,
                (status & COUNTER_CORE_STAT_FIFO_EMPTY) ? 1 : 0);
     xil_printf(" EDGE_SKIP  %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_EDGE_SKIP_OFFSET));
     xil_printf(" TS_COUNT   %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_TS_COUNT_OFFSET));
     xil_printf(" LOST_COUNT %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_LOST_COUNT_OFFSET));
-    xil_printf(" GATE_LEN   %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_GATE_LEN_OFFSET));
-    xil_printf(" EQ_STAND   %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_EQ_STAND_OFFSET));
-    xil_printf(" EQ_TEST    %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_EQ_TEST_OFFSET));
-    xil_printf(" TDC_GATE   0x%08x\r\n", (unsigned int)core_rd(COUNTER_CORE_TDC_GATE_OFFSET));
     xil_printf(" FIFO_LEVEL %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_FIFO_LEVEL_OFFSET));
     xil_printf(" PRESCALE   0x%08x  [div4=%d]\r\n",
                (unsigned int)core_rd(COUNTER_CORE_PRESCALE_OFFSET),
@@ -1112,160 +866,6 @@ static void print_fixed3(const char *tag, double v, const char *unit)
     }
 
     xil_printf("%lu.%03lu %s\r\n", (unsigned long)ip, (unsigned long)fp, unit);
-}
-
-/*===========================================================================
- * RepeatTest -- repeatability measurement
- *
- * A single reading proves nothing about a frequency counter; spread across
- * repeated measurements is the real figure of merit. This runs the
- * equal-precision path n times at a fixed gate and reports the spread.
- *
- * What to look for:
- *
- *   N varies by +/-1        normal, that is the coarse quantization
- *   N identical every time  suspicious: either the gate never really
- *                           reopened, or the two clocks are locked together
- *   rise spread over 0..63  TDC is alive, saturating only near the ends
- *   rise pinned at 63       delay chain saturates systematically; the TDC
- *                           correction is noise and is better left out
- *   rise never changes      delay chain is dead, only coarse counting works
- *
- * The peak-to-peak of f is this unit's actual repeatability at that gate
- * length, which beats any theoretical estimate.
- *
- * gate_len is in clk_fs periods: 312500 = 1 ms, 31250000 = 100 ms.
- *=========================================================================*/
-void RepeatTest(int n, u32 gate_len)
-{
-    int i, ok = 0, fail = 0;
-    int rise_sat = 0;                   /* runs where rise hit the range limit */
-    u32 f_s;
-    u32 n_min = 0xFFFFFFFFu, n_max = 0;
-    u32 rise_min = 0xFFu, rise_max = 0;
-    u32 fall_min = 0xFFu, fall_max = 0;
-    double f_min = 0.0, f_max = 0.0, f_sum = 0.0;
-
-    if (n <= 0 || gate_len == 0) {
-        xil_printf("[REPEAT] bad parameters\r\n");
-        return;
-    }
-
-    f_s = GetClkFsFreq();
-    if (f_s == 0) {
-        xil_printf("[REPEAT] reference frequency is zero\r\n");
-        return;
-    }
-
-    xil_printf("---- RepeatTest: %d runs, gate_len=%lu ----\r\n",
-               n, (unsigned long)gate_len);
-    print_fixed3(" gate time  ", (double)gate_len * 1000.0 / (double)f_s, "ms");
-    xil_printf(" reference  %lu Hz\r\n", (unsigned long)f_s);
-    xil_printf(" TDC corr   %s\r\n", TDC_CORRECTION_ENABLED ? "ON" : "OFF");
-
-    for (i = 0; i < n; i++) {
-        u32 stand, test, tdcw, rise, fall;
-        double eff, fr;
-
-        if (RunEqualPrecision(gate_len, &stand, &test, &tdcw) != 0) {
-            xil_printf("[%02d] TIMEOUT\r\n", i);
-            fail++;
-            continue;
-        }
-
-        if (stand == 0) {
-            xil_printf("[%02d] EQ_STAND is zero\r\n", i);
-            fail++;
-            continue;
-        }
-
-        /* The hardware gate makes this an exact equality; any deviation
-           means the gate logic misbehaved on this run */
-        if (stand != gate_len)
-            xil_printf("[%02d] gate mismatch: stand=%lu\r\n",
-                       i, (unsigned long)stand);
-
-        /* Still read and reported even when the correction is disabled --
-           the raw TDC values are what tell you whether the delay chain is
-           healthy enough to turn the correction back on. */
-        rise = COUNTER_CORE_TDC_RISE(tdcw);
-        fall = COUNTER_CORE_TDC_FALL(tdcw);
-
-        eff = eq_effective_count(test, tdcw);
-
-        fr = (double)f_s * eff / (double)stand;
-
-        xil_printf("[%02d] N=%-10lu rise=%2lu fall=%2lu  ",
-                   i, (unsigned long)test,
-                   (unsigned long)rise, (unsigned long)fall);
-        print_fixed3("f=", fr, "Hz");
-
-        if (ok == 0) {
-            f_min = f_max = fr;
-        } else {
-            if (fr < f_min) f_min = fr;
-            if (fr > f_max) f_max = fr;
-        }
-        f_sum += fr;
-
-        if (test < n_min) n_min = test;
-        if (test > n_max) n_max = test;
-        if (rise < rise_min) rise_min = rise;
-        if (rise > rise_max) rise_max = rise;
-        if (rise >= (u32)(TDC_NUM_TAPS - 1)) rise_sat++;
-        if (fall < fall_min) fall_min = fall;
-        if (fall > fall_max) fall_max = fall;
-
-        ok++;
-    }
-
-    xil_printf("---- summary ----\r\n");
-    xil_printf(" runs ok/fail  %d/%d\r\n", ok, fail);
-
-    if (ok == 0) {
-        xil_printf(" no valid runs\r\n");
-        return;
-    }
-
-    xil_printf(" N     %lu .. %lu  (spread %lu)\r\n",
-               (unsigned long)n_min, (unsigned long)n_max,
-               (unsigned long)(n_max - n_min));
-    xil_printf(" rise  %lu .. %lu  (saturated %d/%d runs)\r\n",
-               (unsigned long)rise_min, (unsigned long)rise_max, rise_sat, ok);
-    xil_printf(" fall  %lu .. %lu\r\n",
-               (unsigned long)fall_min, (unsigned long)fall_max);
-
-    {
-        double mean = f_sum / (double)ok;
-
-        print_fixed3(" f min       ", f_min, "Hz");
-        print_fixed3(" f max       ", f_max, "Hz");
-        print_fixed3(" f mean      ", mean, "Hz");
-        print_fixed3(" f pk-pk     ", f_max - f_min, "Hz");
-
-        /* Relative spread is the number to compare against a spec sheet */
-        if (mean > 0.0)
-            print_fixed3(" f pk-pk rel ", (f_max - f_min) / mean * 1e6, "ppm");
-    }
-
-    /* Delay chain health, reported whether or not the correction is applied.
-       The saturation rate matters more than the min/max range: rise can span
-       0..63 while still sitting at the limit on 90% of runs, which is enough
-       to turn the correction into a fixed bias. */
-    /* Saturation is checked first: a rise pinned at the limit also satisfies
-       "never changes", and saturation is the more specific diagnosis. Testing
-       the other way round reports a dead chain when the chain is merely too
-       short. */
-    if (rise_sat * 2 > ok) {
-        xil_printf(" NOTE: rise saturated on %d of %d runs, chain too short\r\n",
-                   rise_sat, ok);
-        if (TDC_CORRECTION_ENABLED)
-            xil_printf("       correction is ON and adding a fixed bias -- turn it off\r\n");
-    } else if (rise_min == rise_max) {
-        xil_printf(" NOTE: rise never changes, delay chain may be dead\r\n");
-    } else if (rise_sat * 10 <= ok && !TDC_CORRECTION_ENABLED) {
-        xil_printf(" NOTE: saturation under 10%%, TDC may be worth re-enabling\r\n");
-    }
 }
 
 /*===========================================================================

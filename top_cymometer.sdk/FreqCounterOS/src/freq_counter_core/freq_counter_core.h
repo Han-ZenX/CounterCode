@@ -11,17 +11,10 @@
  *  XPAR_COUNTER_0_S_AXI_BASEADDR no longer exist and that file no longer
  *  compiles.
  *
- *  Two things changed fundamentally:
- *
- *  1. The gate is timed in hardware. Old code did
- *         SetGATE(1); usleep(n); SetGATE(0);
- *     so the gate width was whatever FreeRTOS scheduling produced. Now
- *     GATE_LEN is written in clk_fs periods and hardware opens and closes the
- *     gate itself.
- *
- *  2. Timestamps arrive by DMA. Old code polled the FIFO with roughly 1500
- *     AXI-Lite transactions per measurement. Now the engine streams straight
- *     into DDR and the CPU is not involved during acquisition.
+ *  What changed fundamentally: timestamps arrive by DMA. Old code polled the
+ *  FIFO with roughly 1500 AXI-Lite transactions per measurement. Now the
+ *  engine streams straight into DDR and the CPU is not involved during
+ *  acquisition.
  *
  *  The public interface matches the old freq_counter.h so scpi.c only needs
  *  its include path changed.
@@ -57,7 +50,6 @@
  *=========================================================================*/
 #define COUNTER_SIG_REG0        COUNTER_SIG_S_AXI_SLV_REG0_OFFSET  /* CTR_STATUS0 */
 #define COUNTER_SIG_REG1        COUNTER_SIG_S_AXI_SLV_REG1_OFFSET  /* CTR_STATUS1 */
-#define COUNTER_SIG_REG2        COUNTER_SIG_S_AXI_SLV_REG2_OFFSET  /* CTR_START_T */
 #define COUNTER_SIG_REG3        COUNTER_SIG_S_AXI_SLV_REG3_OFFSET  /* CTR_PRIREF */
 #define COUNTER_SIG_REG4        COUNTER_SIG_S_AXI_SLV_REG4_OFFSET  /* CTR_REF_CLOCK */
 #define COUNTER_SIG_REG5        COUNTER_SIG_S_AXI_SLV_REG5_OFFSET  /* CTR_OCXO */
@@ -115,42 +107,6 @@
 #define TS_POISON               0xDEADBEEFDEADBEEFull
 
 /*===========================================================================
- * TDC correction switch
- *
- * Set to 0 to ignore the gate TDC values and use the raw coarse count.
- *
- * Why it currently defaults to 0
- * ------------------------------
- * It was originally disabled because tdc_test_rise read 63 on every single
- * run -- pinned at the saturation limit. Two root causes were recorded, and
- * both have since been dealt with:
- *
- *   1. "Effective resolution is 16 steps, not 64; 80% of values are multiples
- *      of 4." Correct symptom, and the cause turned out to be a miswired
- *      cascade: tdc.v took the carry from CO[0], an ordinary combinational
- *      output on general routing, instead of CO[3], the dedicated COUT. Fixed.
- *      Code density now reports 217 permille multiples of 4 against the 250
- *      uniform expectation.
- *   2. "The chain spans only ~1.9 ns against a full clock period." Also
- *      correct, and it survived the fix: 64 taps measured 1.35 ns at 21.0 ps
- *      per tap, only 42% of the 3.2 ns period. The chain has been lengthened
- *      to 256 taps, which spans about 5.4 ns.
- *
- * (A third bug was found alongside these: the CARRY4 O outputs are inverted,
- * so the reading was NUM_TAPS - distance rather than the distance. That is
- * compensated in the popcount stage now.)
- *
- * Still 0 because the 256-tap chain has not been measured on hardware yet.
- * Re-enable once TdcHistogramTest on the new chain shows the saturation gone
- * (past-end near zero, coverage across all 256 codes) and a code density
- * calibration has been folded in.
- *
- * Note this only affects the equal-precision path. The timestamp path reads
- * its TDC field straight out of the packed word.
- *=========================================================================*/
-#define TDC_CORRECTION_ENABLED  1
-
-/*===========================================================================
  * Return codes for the capture path
  *=========================================================================*/
 #define TS_OK                    0
@@ -164,11 +120,7 @@
  * Globals (referenced directly by scpi.c)
  *=========================================================================*/
 extern int    FREF;                 /* expected/reference frequency, Hz */
-extern int    PPM;                  /* tolerance for the START_T search */
 extern double GATE_TIME;            /* gate duration, ms */
-extern double START_GATE_TIME;      /* gate duration for START_T, ms */
-extern double START_T_TIME;         /* START_T result, ms */
-extern int    START_T_END;          /* START_T completion flag */
 
 extern u32 g_clk_fs_freq;
 extern u32 g_clk_fs_freq_sd;
@@ -194,7 +146,6 @@ int  Set_CTR_REF_CLOCK(u32 v);
 int  Set_CTR_OCXO(u32 v);
 u32  ReadSTATUS0(void);
 u32  ReadSTATUS1(void);
-u32  ReadSTARTT(void);
 
 /*===========================================================================
  * Measurement
@@ -205,16 +156,6 @@ int  ReadFr_TimestampMode(char *Freq);      /* DMA timestamps + least squares;
                                                turns on the /4 prescaler above
                                                the Nyquist limit and scales the
                                                result back up */
-/*
- * Equal-precision measurement. No longer used for frequency readout -- its
- * uncertainty is the +/-1 count, about 0.03 ppm at a 100 ms gate, against
- * 0.00004 ppm for the timestamp fit. Kept for ReadStartT, RepeatTest, and as an
- * independent cross-check of the prescaled path.
- */
-int  ReadFr_EqualPrecision(char *Freq);
-
-double ReadStartT(char *Freq);
-void   InitStartT(void *p);
 
 /*===========================================================================
  * Lower level, exposed for diagnostics
@@ -230,14 +171,6 @@ void   DumpCoreStatus(void);
  * never saw the data" apart from "the DMA saw it but never ended".
  */
 void   DumpDmaStatus(void);
-
-/*
- * Repeatability test: runs the equal-precision path n times at a fixed gate
- * and prints the spread of N, the TDC values and the resulting frequency.
- *
- * gate_len is in clk_fs periods: 312500 = 1 ms, 31250000 = 100 ms.
- */
-void   RepeatTest(int n, u32 gate_len);
 
 /*
  * End to end check of the timestamp path: captures over DMA, verifies the

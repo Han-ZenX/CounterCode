@@ -34,14 +34,13 @@ XStatus COUNTER_CORE_Reg_SelfTest(void * baseaddr_p)
 {
 	u32 baseaddr;
 	u32 version;
-	u32 saved_skip, saved_gate, saved_pkt;
+	u32 saved_skip, saved_pkt;
 	u32 i;
 	XStatus status = XST_SUCCESS;
 
 	/* Side-effect-free writable registers used for the readback loop */
-	static const u32 rw_offsets[3] = {
+	static const u32 rw_offsets[2] = {
 		COUNTER_CORE_EDGE_SKIP_OFFSET,
-		COUNTER_CORE_GATE_LEN_OFFSET,
 		COUNTER_CORE_PKT_LEN_OFFSET
 	};
 	static const u32 patterns[3] = {
@@ -75,10 +74,9 @@ XStatus COUNTER_CORE_Reg_SelfTest(void * baseaddr_p)
 	 * compared as 16 bits.
 	 *------------------------------------------------------------*/
 	saved_skip = COUNTER_CORE_mReadReg(baseaddr, COUNTER_CORE_EDGE_SKIP_OFFSET);
-	saved_gate = COUNTER_CORE_mReadReg(baseaddr, COUNTER_CORE_GATE_LEN_OFFSET);
 	saved_pkt  = COUNTER_CORE_mReadReg(baseaddr, COUNTER_CORE_PKT_LEN_OFFSET);
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 2; i++) {
 		u32 off = rw_offsets[i];
 		u32 p, rd, expect;
 
@@ -104,7 +102,6 @@ XStatus COUNTER_CORE_Reg_SelfTest(void * baseaddr_p)
 
 	/* Restore original values */
 	COUNTER_CORE_mWriteReg(baseaddr, COUNTER_CORE_EDGE_SKIP_OFFSET, saved_skip);
-	COUNTER_CORE_mWriteReg(baseaddr, COUNTER_CORE_GATE_LEN_OFFSET, saved_gate);
 	COUNTER_CORE_mWriteReg(baseaddr, COUNTER_CORE_PKT_LEN_OFFSET, saved_pkt);
 
 	if (status == XST_SUCCESS)

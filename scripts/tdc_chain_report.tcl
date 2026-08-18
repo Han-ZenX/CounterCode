@@ -102,7 +102,4 @@ puts "============================================================"
 report_tdc_chain "timestamp engine chain" "*u_ts_engine/u_tdc/*carry4_inst*"
 report_tap_regs  "" "*u_ts_engine/u_tdc/tap_reg_reg*"
 
-report_tdc_chain "equal-precision test chain" "*u_eq_counter/u_tdc_test/*carry4_inst*"
-report_tap_regs  "" "*u_eq_counter/u_tdc_test/tap_reg_reg*"
-
 puts ""

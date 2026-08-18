@@ -25,10 +25,9 @@
 #define COUNTER_CORE_EDGE_SKIP_OFFSET   0x08u   /* R/W capture 1 of every N+1 edges */
 #define COUNTER_CORE_TS_COUNT_OFFSET    0x0Cu   /* R   total timestamps written */
 #define COUNTER_CORE_LOST_COUNT_OFFSET  0x10u   /* R   edges dropped */
-#define COUNTER_CORE_GATE_LEN_OFFSET    0x14u   /* R/W gate length in clk_fs periods */
-#define COUNTER_CORE_EQ_STAND_OFFSET    0x18u   /* R   equal-precision reference count */
-#define COUNTER_CORE_EQ_TEST_OFFSET     0x1Cu   /* R   equal-precision test count */
-#define COUNTER_CORE_TDC_GATE_OFFSET    0x20u   /* R   gate TDC correction values */
+/* 0x14..0x20 were GATE_LEN / EQ_STAND / EQ_TEST / TDC_GATE, used by the
+   equal-precision path. That path has been removed; the addresses are left
+   unassigned and read back as 0. */
 #define COUNTER_CORE_FIFO_LEVEL_OFFSET  0x24u   /* R   entries still in the FIFO */
 #define COUNTER_CORE_VERSION_OFFSET     0x28u   /* R   version magic */
 #define COUNTER_CORE_PKT_LEN_OFFSET     0x2Cu   /* R/W M_AXIS packet length in beats */
@@ -37,9 +36,9 @@
 /****************** PRESCALE bits ********************/
 /*
  * DIV4 divides the signal under test by 4 before the timestamp engine, so
- * inputs above the clk_fs Nyquist limit can still be timestamped instead of
- * falling back to equal-precision counting. Software must multiply the measured
- * frequency by COUNTER_CORE_PRESCALE_RATIO when this is set.
+ * inputs above the clk_fs Nyquist limit can still be timestamped. Software must
+ * multiply the measured frequency by COUNTER_CORE_PRESCALE_RATIO when this is
+ * set.
  *
  * Only change it while CTRL.TS_EN is low: the divider select is combinational,
  * not latched at capture start the way EDGE_SKIP is.
@@ -55,19 +54,12 @@
 /****************** CTRL bits ********************/
 #define COUNTER_CORE_CTRL_TS_EN         (1u << 0)  /* timestamp engine enable */
 #define COUNTER_CORE_CTRL_TS_RST        (1u << 1)  /* reset engine and FIFO (level) */
-#define COUNTER_CORE_CTRL_EQ_START      (1u << 2)  /* rising edge starts one equal-precision measurement */
 #define COUNTER_CORE_CTRL_SOFT_RST      (1u << 3)  /* reset the whole measurement core */
 
 /****************** STATUS bits ********************/
 #define COUNTER_CORE_STAT_TS_RUNNING    (1u << 0)
 #define COUNTER_CORE_STAT_OVERFLOW      (1u << 1)  /* sticky, cleared by TS_RST */
-#define COUNTER_CORE_STAT_EQ_DONE       (1u << 2)
-#define COUNTER_CORE_STAT_EQ_BUSY       (1u << 3)
 #define COUNTER_CORE_STAT_FIFO_EMPTY    (1u << 4)
-
-/****************** TDC_GATE fields ********************/
-#define COUNTER_CORE_TDC_RISE(v)        ((v) & 0xFFu)
-#define COUNTER_CORE_TDC_FALL(v)        (((v) >> 8) & 0xFFu)
 
 /****************** Timestamp fields (64-bit, written to DDR by DMA) ********************/
 /*

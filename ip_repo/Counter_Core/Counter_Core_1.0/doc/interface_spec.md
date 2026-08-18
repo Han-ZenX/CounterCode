@@ -27,11 +27,10 @@
 被测频率超过基准时钟奈奎斯特（>140 MHz）时无法逐边沿打时间戳，此时由 `PRESCALE.DIV4`
 打开硬件四分频（见 3.4），时间戳法继续可用，软件把结果乘 4 还原。
 
-等精度计数（`eq_counter`）**不再参与测频分派**。它的不确定度就是 ±1 计数
+等精度计数（`eq_counter`）已整体删除，测频只剩时间戳这一条路径。它的不确定度就是 ±1 计数
 `1/(f_x·T_gate)`，350 MHz / 100 ms 闸门为 0.029 ppm，与实测完全吻合 —— 说明本该改善它的
 闸门 TDC 校正从未真正生效（见 7.2）。同一闸门下时间戳法可达 0.00004 ppm。
-硬件与 `EQ_*` / `TDC_GATE` 寄存器保留，供 START_T 短闸门测量、重复性诊断，
-以及作为分频通路的独立交叉验证手段。其闸门由硬件定时器产生。
+对应的 `EQ_*` / `TDC_GATE` / `GATE_LEN` 寄存器与 `CTRL.EQ_START`、`STATUS.EQ_*` 一并移除。
 
 ---
 
@@ -74,10 +73,7 @@ double t = ((double)coarse + (double)tdc / 256.0) / f_s;
 | 0x08 | `EDGE_SKIP` | R/W | 每 `N+1` 个边沿采一条。0 = 每个边沿都采。**测频时应调大以拉长时间跨度换精度**，见 5.1 |
 | 0x0C | `TS_COUNT` | R | 已成功写入 FIFO 的时间戳总数 |
 | 0x10 | `LOST_COUNT` | R | 因 FIFO 满而丢弃的边沿数。gap-free 成立时应恒为 0 |
-| 0x14 | `GATE_LEN` | R/W | 等精度模式闸门长度，单位 `clk_fs` 周期。0 = 不自动关闸 |
-| 0x18 | `EQ_STAND` | R | 等精度：闸门内基准时钟计数 |
-| 0x1C | `EQ_TEST` | R | 等精度：闸门内被测信号计数 |
-| 0x20 | `TDC_GATE` | R | 四个闸门 TDC 值打包，见 3.3 |
+| 0x14 | — | — | 保留。原 `GATE_LEN` / `EQ_STAND` / `EQ_TEST` / `TDC_GATE`，等精度路径已移除，读作 0 |
 | 0x24 | `FIFO_LEVEL` | R | 当前 FIFO 中未取走的条目数（调试用） |
 | 0x28 | `VERSION` | R | 魔数 `0x43430101` = "CC" + v1.01（加 `PRESCALE` 时从 `0x43430100` 递增） |
 | 0x2C | `TS_PKT_LEN` | R/W | M_AXIS 包长（拍）。每 N 拍产生一个 TLAST。0 = 不产生 TLAST，**simple mode 下会导致 DMA 永不结束**，见下方说明 |
@@ -103,7 +99,7 @@ double t = ((double)coarse + (double)tdc / 256.0) / f_s;
 |----|------|------|
 | 0 | `TS_EN` | 1 = 时间戳引擎持续采集并向 M_AXIS 输出 |
 | 1 | `TS_RST` | 1 = 复位引擎（清 FIFO、计数、序号、溢出标志）。电平有效，需自行拉低 |
-| 2 | `EQ_START` | 上升沿触发一次等精度测量，硬件按 `GATE_LEN` 自动开关闸门 |
+| 2 | — | 保留（原 `EQ_START`，等精度已移除） |
 | 3 | `SOFT_RST` | 1 = 复位整个测量核心 |
 | 31:4 | — | 保留 |
 
@@ -113,36 +109,8 @@ double t = ((double)coarse + (double)tdc / 256.0) / f_s;
 |----|------|------|
 | 0 | `TS_RUNNING` | 时间戳引擎正在采集 |
 | 1 | `OVERFLOW` | **粘滞**溢出标志，发生过丢失即置位，由 `TS_RST` 清除 |
-| 2 | `EQ_DONE` | 等精度测量完成，`EQ_STAND`/`EQ_TEST`/`TDC_GATE` 已就绪 |
-| 3 | `EQ_BUSY` | 等精度闸门开启中 |
 | 4 | `FIFO_EMPTY` | 时间戳 FIFO 为空 |
 | 31:5 | — | 保留 |
-
-### 3.3 TDC_GATE (0x20)
-
-一次读取取回闸门 TDC 校正值，省若干次 AXI 事务：
-
-| 位域 | 内容 |
-|------|------|
-| [7:0] | `tdc_test_rise` — 被测域闸门上升沿相位 |
-| [15:8] | `tdc_test_fall` — 被测域闸门下降沿相位 |
-| [31:16] | 读作 0 |
-
-**为什么没有基准域的两个值。** 闸门现在由 `clk_fs` 域的硬件计数器产生，
-与基准时钟严格同步，闸门宽度精确等于 `GATE_LEN` 个 `clk_fs` 周期，
-基准侧不存在 ±1 量化误差，也就无需 TDC 校正。原 IP 的
-`tdc_ref_rise/fall` 在新架构下失去意义，已删除对应硬件。
-
-> 原 IP 的四个 TDC 值实际上都是无效的：它把 TDC 的 `signal_in` 接在
-> 同步器输出 `gate_sync_*[2]` 上，该信号跳变严格对齐时钟沿，
-> TDC 只能测到时钟到 FF 的固定布线延迟，不含闸门相位信息。
-> 新设计把 TDC 接到原始异步 `gate` 上才取到真实相位。
-
-软件计算：
-
-```
-f_test = f_s × (EQ_TEST + tdc_test_rise/256 - tdc_test_fall/256) / EQ_STAND
-```
 
 ### 3.4 PRESCALE (0x30)
 
@@ -151,7 +119,7 @@ f_test = f_s × (EQ_TEST + tdc_test_rise/256 - tdc_test_fall/256) / EQ_STAND
 | 0 | `DIV4_EN` | 1 = 被测信号四分频后再送时间戳引擎。软件必须把测得频率乘 4 |
 | 31:1 | — | 保留 |
 
-只影响 `ts_engine`。`eq_counter` 把 `clk_fx` 当时钟用，始终接原始信号，不受本位影响。
+只影响 `ts_engine`。
 
 **为什么需要它。** `ts_engine` 把 `clk_fx` 当**数据**在 `clk_fs` 域采样，要求高、低电平各自
 都长于一个 `clk_fs` 周期（3.2 ns）。四分频输出取自计数器 bit1，恒为 50% 方波，且分频后
@@ -169,7 +137,7 @@ f_test = f_s × (EQ_TEST + tdc_test_rise/256 - tdc_test_fall/256) / EQ_STAND
 
 | 约束 | 上限 | 说明 |
 |------|------|------|
-| XDC `clk_fx` 约束 2.857 ns | **350 MHz** | 当前实际上限。`eq_counter` 仍跑原始 `clk_fx`，要更高须收紧约束并确认其 32 位计数器收敛 |
+| XDC `clk_fx` 约束 2.857 ns | **350 MHz** | 当前实际上限。要更高须收紧约束 |
 | TDC 链跨度 5.376 ns（256 × 21 ps） | ~372 MHz | 分频后半周期须长于链跨度，否则链里同时残留上一个下降沿，温度计码被污染 |
 | `clk_fs` 电平采样 | 562.5 MHz | 分频后 ≤ 140.625 MHz |
 | BUFG 最高频率（-1 器件） | ~460 MHz | 物理天花板 |
@@ -213,19 +181,6 @@ Xil_DCacheInvalidateRange((UINTPTR)buf, len);
 // 7. 校验连续性后做最小二乘回归
 if (ReadReg(STATUS) & STATUS_OVERFLOW) { /* 存在间隙，分段处理 */ }
 ```
-
-### 4.2 等精度模式（不再用于测频，仅 START_T 与诊断）
-
-```c
-WriteReg(GATE_LEN, (u32)(f_s * gate_sec));   // 硬件定时，不再 usleep
-WriteReg(CTRL, CTRL_EQ_START);
-while (!(ReadReg(STATUS) & STATUS_EQ_DONE)) ;
-u32 stand = ReadReg(EQ_STAND), test = ReadReg(EQ_TEST);
-u32 tdc = ReadReg(TDC_GATE);
-```
-
-`CTRL.EQ_START` 是**上升沿触发**（硬件 `eq_go = eq_start & ~eq_start_d`），
-写 1 之后必须写回 0，否则第二次测量不会启动。
 
 ### 4.3 等待 DMA 完成：不要用 `XAxiDma_Busy()`
 
@@ -422,8 +377,8 @@ t_tap      21.0 ps        （修复前表观 133 ps）
 且成为修复后唯一剩下的瓶颈：64 抽头只覆盖 3.2 ns 周期的 42%，58% 的样本饱和。
 
 **布局无需人工约束。** 改用 `CO[3]` 后级联走 `COUT → 正上方 slice 的 CIN` 硬连线，
-布局器别无选择。routed 检查点实测两条链均为单列连续
-（`SLICE_X62Y62..Y77` 和 `SLICE_X58Y75..Y90`），
+布局器别无选择。routed 检查点实测时间戳链为单列连续（`SLICE_X62Y62..Y77`，
+当时另有一条等精度链 `SLICE_X58Y75..Y90`，现已随等精度路径删除），
 `tap_reg` 的 64 个触发器落在同一 Y 范围内，采样偏斜已最小化。
 `scripts/tdc_chain_report.tcl` 可复查。
 
@@ -433,12 +388,10 @@ t_tap      21.0 ps        （修复前表观 133 ps）
 这个技巧只在 2 的幂下成立。
 
 连带改动：流水线从 3 级增至 5 级（`TDC_LATENCY = 5`），
-`ts_engine` 的抽头随之改为 `edge_d4` / `free_run_cnt_d5`，
-`eq_counter` 的闸门同步器改为 `STAGES(6)`，推导见 `tdc.v` 头部的 timing contract。
+`ts_engine` 的抽头随之改为 `edge_d4` / `free_run_cnt_d5`，推导见 `tdc.v` 头部的 timing contract。
 
-⚠ **256 抽头版本尚未上板验证。** `TDC_CORRECTION_ENABLED` 仍为 0，
-待 `TdcHistogramTest` 确认饱和消失（past-end 接近 0、256 个码全覆盖）
-并完成码密度标定后再启用。
+⚠ **256 抽头版本尚未上板验证。** 待 `TdcHistogramTest` 确认饱和消失
+（past-end 接近 0、256 个码全覆盖）并完成码密度标定。
 
 ### 7.3 硬性约束：引擎只能在 DMA 已 armed 的前提下开启
 

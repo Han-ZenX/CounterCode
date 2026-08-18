@@ -1,7 +1,7 @@
 //Copyright 1986-2018 Xilinx, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2018.3 (win64) Build 2405991 Thu Dec  6 23:38:27 MST 2018
-//Date        : Mon Aug 17 17:23:53 2026
+//Date        : Tue Aug 18 09:42:29 2026
 //Host        : DESKTOP-9L351U0 running 64-bit major release  (build 9200)
 //Command     : generate_target ps.bd
 //Design      : ps
@@ -426,7 +426,7 @@ module m02_couplers_imp_Y7CMOD
   assign m02_couplers_to_m02_couplers_WVALID = S_AXI_wvalid;
 endmodule
 
-(* CORE_GENERATION_INFO = "ps,IP_Integrator,{x_ipVendor=xilinx.com,x_ipLibrary=BlockDiagram,x_ipName=ps,x_ipVersion=1.00.a,x_ipLanguage=VERILOG,numBlks=14,numReposBlks=9,numNonXlnxBlks=0,numHierBlks=5,maxHierDepth=0,numSysgenBlks=0,numHlsBlks=0,numHdlrefBlks=0,numPkgbdBlks=0,bdsource=USER,da_axi4_cnt=84,da_board_cnt=1,da_clkrst_cnt=14,da_ps7_cnt=1,synth_mode=OOC_per_IP}" *) (* HW_HANDOFF = "ps.hwdef" *) 
+(* CORE_GENERATION_INFO = "ps,IP_Integrator,{x_ipVendor=xilinx.com,x_ipLibrary=BlockDiagram,x_ipName=ps,x_ipVersion=1.00.a,x_ipLanguage=VERILOG,numBlks=14,numReposBlks=9,numNonXlnxBlks=0,numHierBlks=5,maxHierDepth=0,numSysgenBlks=0,numHlsBlks=0,numHdlrefBlks=0,numPkgbdBlks=0,bdsource=USER,da_axi4_cnt=85,da_board_cnt=1,da_clkrst_cnt=15,da_ps7_cnt=1,synth_mode=OOC_per_IP}" *) (* HW_HANDOFF = "ps.hwdef" *) 
 module ps
    (CTR_OCXO,
     CTR_PRIREF,
@@ -673,7 +673,7 @@ module ps
   assign clk_fs_p_0_1 = clk_fs_p;
   assign clk_fx_n_0_1 = clk_fx_n;
   assign clk_fx_p_0_1 = clk_fx_p;
-  ps_Counter_Core_0_0 Counter_Core_0
+  ps_Counter_Core_0_1 Counter_Core_0
        (.clk_fs_n(clk_fs_n_0_1),
         .clk_fs_p(clk_fs_p_0_1),
         .clk_fx_n(clk_fx_n_0_1),

@@ -3,6 +3,8 @@
 日期：2026-08-14
 范围：`top_cymometer.sdk/FreqCounterOS/src/`
 
+> **后续**：`PPM` / `START:GATE:TIME` / `INIT` / `READ:TIME?` 四组命令已于 2026-08-18 随等精度路径删除，本文中的相关条目仅作历史记录，见 [等精度与TDC闸门校正删除说明](等精度与TDC闸门校正删除说明.md)。
+
 ---
 
 ## 1. 背景

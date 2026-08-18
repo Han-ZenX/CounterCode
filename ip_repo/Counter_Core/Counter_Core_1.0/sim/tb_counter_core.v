@@ -3,7 +3,7 @@
 // tb_counter_core -- functional verification of the Counter_Core measurement core
 //
 // Run (Vivado xsim, needs the unisim library for CARRY4):
-//   xvlog ../src/cdc.v ../src/tdc.v ../src/ts_engine.v ../src/eq_counter.v \
+//   xvlog ../src/cdc.v ../src/tdc.v ../src/ts_engine.v \
 //         ../src/counter_core.v tb_counter_core.v
 //   xelab -L unisims_ver -debug typical tb_counter_core -s tb
 //   xsim tb -runall
@@ -49,14 +49,11 @@ module tb_counter_core;
     //------------------------------------------------------------------
     reg         ts_en    = 1'b0;
     reg         ts_rst   = 1'b0;
-    reg         eq_start = 1'b0;
     reg         soft_rst = 1'b0;
     reg [31:0]  edge_skip = 32'd0;
-    reg [31:0]  gate_len  = 32'd0;
 
-    wire        ts_running, overflow, eq_done, eq_busy, fifo_empty;
-    wire [31:0] ts_count, lost_count, eq_stand, eq_test;
-    wire [7:0]  tdc_test_rise, tdc_test_fall;
+    wire        ts_running, overflow, fifo_empty;
+    wire [31:0] ts_count, lost_count;
     wire [FIFO_AW:0] fifo_level;
 
     wire [63:0] ts_data;
@@ -69,14 +66,12 @@ module tb_counter_core;
     ) dut (
         .clk_fs (clk_fs), .clk_fx (clk_fx), .aclk (aclk), .aresetn (aresetn),
 
-        .ts_en (ts_en), .ts_rst (ts_rst), .eq_start (eq_start),
-        .soft_rst (soft_rst), .edge_skip (edge_skip), .gate_len (gate_len),
+        .ts_en (ts_en), .ts_rst (ts_rst),
+        .soft_rst (soft_rst), .edge_skip (edge_skip),
 
         .ts_running (ts_running), .overflow (overflow),
-        .eq_done (eq_done), .eq_busy (eq_busy), .fifo_empty (fifo_empty),
+        .fifo_empty (fifo_empty),
         .ts_count (ts_count), .lost_count (lost_count),
-        .eq_stand (eq_stand), .eq_test (eq_test),
-        .tdc_test_rise (tdc_test_rise), .tdc_test_fall (tdc_test_fall),
         .fifo_level (fifo_level),
 
         .ts_data (ts_data), .ts_valid (ts_valid), .ts_ready (ts_ready)
@@ -244,33 +239,6 @@ module tb_counter_core;
         end
         if (seq_err != 0) begin
             $display("[ERR] sequence must remain contiguous under edge_skip");
-        end
-
-        //--------------------------------------------------------------
-        // Case 4: hardware gate, EQ_STAND must equal GATE_LEN exactly
-        //--------------------------------------------------------------
-        $display("\n-- Case 4: hardware gate --");
-        edge_skip = 32'd0;
-        gate_len  = 32'd1000;   // 1000 clk_fs periods = 3.2 us
-        #100;
-        eq_start = 1'b1;
-        #100;
-        eq_start = 1'b0;
-
-        wait (eq_done == 1'b1);
-        #100;
-
-        $display("   eq_stand=%0d (expect 1000), eq_test=%0d (expect about 32)",
-                 eq_stand, eq_test);
-        if (eq_stand !== 32'd1000) begin
-            $display("[ERR] gate width not exact: %0d", eq_stand);
-            errors = errors + 1;
-        end
-        // A 10 MHz signal gives about 32 periods in 3.2 us; allow +/-2 for
-        // synchronizer latency
-        if (eq_test < 29 || eq_test > 35) begin
-            $display("[ERR] test count outside expected range: %0d", eq_test);
-            errors = errors + 1;
         end
 
         //--------------------------------------------------------------
