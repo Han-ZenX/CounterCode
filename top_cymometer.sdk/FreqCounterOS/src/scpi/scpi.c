@@ -152,8 +152,8 @@ static int cmd_gate_time(const char *args, char *resp)
 }
 
 /*
- * Allowed frequency deviation in ppm. Stored only -- nothing in the
- * measurement path reads PPM_RANGE yet.
+ * Allowed frequency deviation in ppm. This is the settling criterion
+ * STARTUP:TIME? applies; the ordinary measurement path does not read it.
  *
  * The query answers in the same 53230A scientific format as FREQ:GATE:TIME?.
  */
@@ -168,6 +168,147 @@ static int cmd_ppm(const char *args, char *resp)
 	(void)resp;
 	PPM_RANGE = atof(args);
 	return 0;
+}
+
+/*
+ * Start-up capture span.
+ *
+ * Milliseconds, not the seconds FREQ:GATE:TIME takes. This is not a 53230A
+ * command and STARTUP:TIME? answers in milliseconds, so one unit across the
+ * STARTUP group is worth more than matching an unrelated command.
+ *
+ * The span only sets a target: edge_skip is an integer, so the instrument
+ * rounds up to the next value that covers it and reports what it actually
+ * used on the console. Below roughly STARTUP_ENTRIES / span the skip bottoms
+ * out at zero and the coverage stretches instead.
+ */
+static int cmd_startup_span_query(const char *args, char *resp)
+{
+	(void)args;
+	return snprintf(resp, SCPI_RESP_MAX, "%.3f\n", STARTUP_SPAN);
+}
+
+/*
+ * No response, matching CONF:FREQ, FREQ:GATE:TIME and PPM.
+ *
+ * An earlier version acknowledged with "1". That is arguably the better
+ * protocol, but it made this the only setter in the table that answers, and a
+ * host written against the existing convention leaves the byte sitting in its
+ * receive buffer -- after which every later read is one response behind, and
+ * STARTUP:TIME? returns "1" forever. One convention, consistently wrong, beats
+ * two conventions. Read back with STARTUP:SPAN? when confirmation is needed.
+ */
+static int cmd_startup_span(const char *args, char *resp)
+{
+	double v = atof(args);
+
+	(void)resp;
+
+	if (v > 0.0)
+		STARTUP_SPAN = v;
+
+	return 0;
+}
+
+/*
+ * Target time resolution of the start-up measurement, in microseconds.
+ *
+ * Microseconds while STARTUP:SPAN is milliseconds -- the two are three orders
+ * of magnitude apart in practice, so mixing them up shows up immediately as an
+ * absurd window count, which the instrument clamps and reports on the console.
+ * Neither setter answers; read back with STARTUP:WIN? to confirm.
+ *
+ * This is what the operator actually cares about; the entries-per-window count
+ * that produces it is derived from the span, because the same count means a
+ * different resolution at a different span.
+ *
+ * A target, not a guarantee. The window must hold at least 8 entries, and at
+ * the default 128 ms span 10 us only works out to 5 -- so the resolution lands
+ * at 15.6 us instead. Shortening the span raises the entry count and, with it,
+ * both reaches the requested resolution and improves the frequency resolution:
+ * at 10 us, a 33 ms span gives 20 entries and 2.31 ppm, a 6.5 ms span gives
+ * 101 entries and 1.03 ppm. Span not needed to cover the transient is span
+ * traded away for nothing.
+ */
+static int cmd_startup_win_query(const char *args, char *resp)
+{
+	(void)args;
+	return snprintf(resp, SCPI_RESP_MAX, "%.3f\n", STARTUP_WIN);
+}
+
+/* No response, for the reason given above cmd_startup_span(). */
+static int cmd_startup_win(const char *args, char *resp)
+{
+	double v = atof(args);
+
+	(void)resp;
+
+	if (v > 0.0)
+		STARTUP_WIN = v;
+
+	return 0;
+}
+
+/*
+ * Start watching CTR_START_T. A write with no response, on purpose.
+ *
+ * The bench sequence is: open the DUT's VCC (CTR_START_T follows it low),
+ * write STARTUP:INIT, close VCC (CTR_START_T goes high and the measurement
+ * starts there), then send STARTUP:TIME? for the answer. The host does not
+ * read anything back here -- it proceeds straight to closing VCC -- so this
+ * handler must not block and must not print. It hands the job to the
+ * measurement task and returns; the instrument is watching the trigger within
+ * microseconds, against the milliseconds a relay takes to close.
+ *
+ * Allow a few milliseconds between this command and closing VCC anyway: the
+ * task still has to poison a 512 KB buffer and arm the DMA, about 1-2 ms.
+ *
+ * A refusal is not silent, it is just deferred -- the reason comes back as
+ * the answer to STARTUP:TIME? (-3 fixture VCC still connected, -5 CONF:FREQ
+ * or PPM not set, -9 no measurement task), and is printed on the serial
+ * console as it happens.
+ *
+ * One refusal is deliberately invisible to the host: a second INIT while a
+ * measurement is still running is ignored rather than reported, because
+ * reporting it would mean discarding the measurement in flight. The pending
+ * STARTUP:TIME? then answers with that measurement.
+ */
+static int cmd_startup_init(const char *args, char *resp)
+{
+	(void)args;
+	(void)resp;
+
+	StartupArm();
+	return 0;
+}
+
+/*
+ * Collect the start-up time, in milliseconds from the CTR_START_T edge.
+ *
+ * Blocks until the measurement finishes, so it can be sent as soon as VCC has
+ * been closed -- it simply waits. Sending it again returns the same answer;
+ * the result is only discarded by the next STARTUP:INIT.
+ *
+ * A negative answer is a failure code, not a duration:
+ *
+ *   -1  captured cleanly but the frequency never settled within the span
+ *   -2  CTR_START_T stayed low until the trigger timeout (10 s)
+ *   -3  CTR_START_T was already high at STARTUP:INIT -- fixture VCC was never
+ *       opened, so t = 0 could not be the power-up instant
+ *   -4  the capture itself failed
+ *   -5  CONF:FREQ or PPM not set
+ *   -6  no STARTUP:INIT preceded this
+ *   -7  the measurement did not finish within the wait timeout
+ *   -9  the measurement task was never created
+ *
+ * The frequency curve, the first-edge time and the resolution achieved go to
+ * the serial console. Worst case it holds the link for the full wait timeout,
+ * so the host's socket timeout has to exceed that.
+ */
+static int cmd_startup_time(const char *args, char *resp)
+{
+	(void)args;
+	return snprintf(resp, SCPI_RESP_MAX, "%.4f\n", StartupWait());
 }
 
 /*
@@ -208,6 +349,26 @@ static int cmd_sig_status1(const char *args, char *resp)
 {
 	(void)args;
 	return snprintf(resp, SCPI_RESP_MAX, "%d\n", ReadSTATUS1() ? 1 : 0);
+}
+
+/*
+ * Current level on CTR_START_T (J14), the start-up trigger.
+ *
+ * Exists for one job: telling "the fixture never opened VCC" apart from "the
+ * pin is floating high" when STARTUP:INIT is refused. Both come back as -3
+ * from STARTUP:TIME?, and without a way to look at the pin there is nothing
+ * to measure against.
+ *
+ * The usual sequence is to open the fixture VCC and then poll this until it
+ * reads 0 before sending STARTUP:INIT. A rail with decoupling capacitance
+ * does not fall below the LVCMOS25 input threshold the instant it is
+ * disconnected, and if it never reaches 0 at all the fixture is not pulling
+ * the node down when VCC is open.
+ */
+static int cmd_sig_startt(const char *args, char *resp)
+{
+	(void)args;
+	return snprintf(resp, SCPI_RESP_MAX, "%d\n", ReadSTARTT() ? 1 : 0);
 }
 
 /*
@@ -309,11 +470,18 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "FREQ:GATE:TIME",   cmd_gate_time             },
 	{ "PPM?",             cmd_ppm_query             },
 	{ "PPM",              cmd_ppm                   },
+	{ "STARTUP:SPAN?",    cmd_startup_span_query    },
+	{ "STARTUP:SPAN",     cmd_startup_span          },
+	{ "STARTUP:WIN?",     cmd_startup_win_query     },
+	{ "STARTUP:WIN",      cmd_startup_win           },
+	{ "STARTUP:INIT",     cmd_startup_init          },
+	{ "STARTUP:TIME?",    cmd_startup_time          },
 	{ "SIG:PRIREF",       cmd_sig_priref            },
 	{ "SIG:REFCLOCK",     cmd_sig_refclock          },
 	{ "SIG:OCXO",         cmd_sig_ocxo              },
 	{ "SIG:STATUS0?",     cmd_sig_status0           },
 	{ "SIG:STATUS1?",     cmd_sig_status1           },
+	{ "SIG:STARTT?",      cmd_sig_startt            },
 	{ "CAL:REF:PREP",     cmd_cal_ref_prep          },
 	{ "CAL:REF:VAL?",     cmd_cal_ref_val           },
 	{ "CAL:REF?",         cmd_cal_ref               },

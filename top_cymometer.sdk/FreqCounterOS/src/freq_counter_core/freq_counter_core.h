@@ -50,6 +50,7 @@
  *=========================================================================*/
 #define COUNTER_SIG_REG0        COUNTER_SIG_S_AXI_SLV_REG0_OFFSET  /* CTR_STATUS0 */
 #define COUNTER_SIG_REG1        COUNTER_SIG_S_AXI_SLV_REG1_OFFSET  /* CTR_STATUS1 */
+#define COUNTER_SIG_REG2        COUNTER_SIG_S_AXI_SLV_REG2_OFFSET  /* CTR_START_T */
 #define COUNTER_SIG_REG3        COUNTER_SIG_S_AXI_SLV_REG3_OFFSET  /* CTR_PRIREF */
 #define COUNTER_SIG_REG4        COUNTER_SIG_S_AXI_SLV_REG4_OFFSET  /* CTR_REF_CLOCK */
 #define COUNTER_SIG_REG5        COUNTER_SIG_S_AXI_SLV_REG5_OFFSET  /* CTR_OCXO */
@@ -137,6 +138,122 @@
 #define TS_POISON               0xDEADBEEFDEADBEEFull
 
 /*===========================================================================
+ * Oscillator start-up measurement
+ *
+ * A separate 512 KB buffer rather than a bigger g_ts_buf: the ordinary
+ * measurement path is correct as it stands and nothing here needs to change
+ * its bounds. 512 KB against a 1 GB DDR is not worth sharing over.
+ *
+ * STARTUP_ENTRIES is the hard ceiling of one simple-mode transfer, set by the
+ * width of pkt_limit in ts_engine.v (16 bits, so 65535 -- not 65536). The DMA
+ * length register would allow 131071, and neither is the constraint here.
+ *
+ * Fixing the entry count and the span makes the interval between consecutive
+ * timestamps STARTUP_SPAN / STARTUP_ENTRIES regardless of the input
+ * frequency. The window is then sized from STARTUP_WIN, the time resolution
+ * asked for, so the entry count per window follows from the span rather than
+ * being configured directly:
+ *
+ *     dt = STARTUP_SPAN / STARTUP_ENTRIES
+ *     N  = STARTUP_WIN / dt          clamped to [MIN_N, MAX_N]
+ *     W  = N * dt                    what the resolution actually comes out at
+ *
+ * Both N and the frequency resolution it yields are independent of the input
+ * frequency, because dt is. The same table applies to a 512 kHz oscillator
+ * and a 100 MHz one.
+ *
+ * The trade is entirely in the span, and it runs the opposite way to
+ * intuition. At a FIXED time resolution:
+ *
+ *     delta[ppm] = sigma_t * sqrt(12) / (sqrt(N) * W),  N = W * ENTRIES / span
+ *
+ * so a SHORTER span gives more entries per window and a BETTER frequency
+ * resolution. Span that is not needed to cover the transient is span traded
+ * away for nothing. At W = 10 us: 6.5 ms span gives N = 101 and 1.03 ppm,
+ * 33 ms gives N = 20 and 2.31 ppm, and the 128 ms default only gets N = 5 --
+ * below MIN_N, so it is raised to 8 and the resolution lands at 15.6 us
+ * instead of the 10 us asked for. Shorten the span to actually get 10 us.
+ *
+ * Below f_x = ENTRIES / span (512 kHz at the default span) edge_skip bottoms
+ * out at 0 and the span stretches instead (65535 / f_x), which makes dt
+ * larger and N smaller; a 32.768 kHz tuning fork cannot reach 10 us at all
+ * and ends up at MIN_N * 30.5 us = 244 us. That is still the right trade for
+ * a device that takes a second to start.
+ *
+ * MIN_N is 8 because a straight line fitted through fewer points has almost
+ * no residual degrees of freedom, and the early part of a start-up transient
+ * is exactly where noise spikes over the input threshold would then dominate
+ * the fit. MAX_N keeps at least 16 windows in the capture.
+ *
+ * STARTUP_HOLD exists because the frequency of a starting oscillator
+ * converges by ringing through the target rather than approaching it from one
+ * side. A single window inside the band is not settling, and taking it as
+ * such underestimates the start-up time.
+ *=========================================================================*/
+#define STARTUP_ENTRIES         65535   /* one transfer; pkt_limit is 16 bits */
+#define STARTUP_HOLD            3       /* consecutive windows inside the band */
+#define STARTUP_SPAN_DEFAULT    128.0   /* ms */
+#define STARTUP_WIN_DEFAULT     10.0    /* us, target time resolution */
+#define STARTUP_WIN_MIN_N       8       /* fewest entries a window may hold */
+#define STARTUP_WIN_MAX_N       4096    /* keeps >= 16 windows in the capture */
+#define STARTUP_TRIG_TIMEOUT_MS 10000   /* how long to wait for CTR_START_T */
+
+/*
+ * The measurement runs on its own task, because the bench sequence requires
+ * it. The host opens the DUT's VCC (CTR_START_T goes low), writes
+ * STARTUP:INIT, closes VCC (CTR_START_T goes high -- and the measurement must
+ * start THERE), and only afterwards sends STARTUP:TIME? to collect the
+ * answer. STARTUP:INIT is a write with no response, so the host proceeds to
+ * close VCC as soon as it has written it: the instrument has to be watching
+ * the trigger by then, which is why arming cannot be the thing that blocks.
+ *
+ * The two priorities are the whole design, and neither is arbitrary:
+ *
+ *   _IDLE = 2 equals the SCPI task's own priority (DEFAULT_THREAD_PRIO in
+ *   lwipopts.h). The notify that arms a measurement must NOT preempt its
+ *   caller. Were the task sitting at _RUN, the notify inside StartupArm()
+ *   would switch to it on the spot and it would not come back until the whole
+ *   measurement was over -- StartupArm() would block for up to tens of
+ *   seconds and the SCPI task would be parked inside a command handler,
+ *   which is exactly what the split into INIT and TIME? exists to avoid.
+ *   Idling at 2 instead, the task becomes runnable but does not run until the
+ *   SCPI task finishes the handler and goes back to blocking on recv. That
+ *   handover is a single context switch, microseconds, against the
+ *   milliseconds a relay needs to close VCC.
+ *
+ *   _RUN = 4 is above lwIP's tcpip thread (TCPIP_THREAD_PRIO = 3). Waiting
+ *   for the trigger is a busy poll that must not be interrupted: time slicing
+ *   is on and a tick is 10 ms here, so an equal priority would hand the CPU
+ *   away for up to 10 ms, which on a millisecond-scale start-up time is a
+ *   100% error on t = 0.
+ *
+ * The price is that the instrument does not service the network from the
+ * trigger poll until the measurement finishes. That matches the bench
+ * sequence -- the host is operating the fixture, not talking -- and a
+ * STARTUP:TIME? that arrives early simply sits in the socket until the answer
+ * exists, which is the semantics it wants anyway.
+ */
+#define STARTUP_TASK_STACK      2048    /* words, so 8 KB off the FreeRTOS heap */
+#define STARTUP_TASK_PRIO_IDLE  2
+#define STARTUP_TASK_PRIO_RUN   4
+
+/*
+ * How long STARTUP:TIME? blocks before giving up. Must exceed the worst case
+ * of the measurement itself: trigger timeout (10 s) plus capture timeout
+ * (2 x span + 5 s) plus the fit. The host's socket timeout has to be larger
+ * than this again.
+ */
+#define STARTUP_WAIT_TIMEOUT_MS 40000
+#define STARTUP_WAIT_POLL_MS    20
+
+/*
+ * Per-timestamp time uncertainty, seconds. Back-solved from the 819 us /
+ * 4096 entry / 0.002 ppm figure in the README, and used only to report the
+ * frequency resolution a given window achieves.
+ */
+#define STARTUP_SIGMA_T         30.0e-12
+
+/*===========================================================================
  * Return codes for the capture path
  *=========================================================================*/
 #define TS_OK                    0
@@ -148,13 +265,53 @@
 #define CAL_ERR_RANGE           -6      /* calibration result outside the sanity window */
 #define CAL_ERR_SD              -7      /* derived, applied to this session, but the SD write failed */
 #define CAL_ERR_PRECOND         -8      /* CTR_STATUS0 / CTR_STATUS1 not both high */
+#define TS_ERR_TRIGGER          -9      /* CTR_START_T stayed low until the timeout */
+
+/*===========================================================================
+ * StartupWait() results, milliseconds
+ *
+ * The function returns a duration, so any negative value is a failure. They
+ * are spelled out here rather than folded into one code because "the crystal
+ * never reached the band" and "the instrument never saw the trigger" call for
+ * completely different actions on the bench.
+ *=========================================================================*/
+#define ST_NOT_SETTLED         -1.0     /* captured cleanly, never settled within the span */
+#define ST_ERR_TRIG            -2.0     /* CTR_START_T stayed low until the timeout */
+#define ST_ERR_ALREADY_HIGH    -3.0     /* CTR_START_T was already high on entry */
+#define ST_ERR_CAPTURE         -4.0     /* capture failed; reason on the console */
+#define ST_ERR_CONFIG          -5.0     /* CONF:FREQ or PPM not set */
+#define ST_ERR_NOT_ARMED       -6.0     /* STARTUP:TIME? without a preceding INIT */
+#define ST_ERR_WAIT_TIMEOUT    -7.0     /* the measurement did not finish in time */
+#define ST_ERR_NO_TASK         -9.0     /* the measurement task was never created */
+
+/*===========================================================================
+ * StartupArm() results
+ *
+ * Integers rather than the doubles above, because arming reports whether the
+ * instrument is now watching the trigger, not a duration. The values match
+ * their ST_ERR_* counterparts because a failed arm also publishes the
+ * corresponding double as the pending result -- STARTUP:INIT carries no
+ * response, so the reason has to reach the host through STARTUP:TIME?.
+ *
+ * ST_ARM_BUSY is the exception and has no ST_ERR_ twin on purpose. A second
+ * INIT arriving mid-measurement must not overwrite the pending result, or the
+ * measurement already in flight would be thrown away in favour of an error
+ * code; the waiting host gets that measurement's answer instead.
+ *=========================================================================*/
+#define ST_ARM_OK                0
+#define ST_ARM_ALREADY_HIGH     -3      /* CTR_START_T high: fixture VCC still connected */
+#define ST_ARM_CONFIG           -5      /* CONF:FREQ or PPM not set */
+#define ST_ARM_BUSY             -8      /* a measurement is still running */
+#define ST_ARM_NO_TASK          -9      /* the measurement task was never created */
 
 /*===========================================================================
  * Globals (referenced directly by scpi.c)
  *=========================================================================*/
 extern int    FREF;                 /* expected/reference frequency, Hz */
 extern double GATE_TIME;            /* gate duration, ms */
-extern double PPM_RANGE;            /* allowed deviation, ppm; set over SCPI, not used yet */
+extern double PPM_RANGE;            /* allowed deviation, ppm; the start-up criterion */
+extern double STARTUP_SPAN;         /* start-up capture span, ms */
+extern double STARTUP_WIN;          /* start-up time resolution asked for, us */
 
 extern u32 g_clk_fs_freq;
 extern u32 g_clk_fs_freq_sd;
@@ -201,6 +358,12 @@ int  Set_CTR_OCXO(u32 v);
 u32  ReadSTATUS0(void);
 u32  ReadSTATUS1(void);
 
+/*
+ * CTR_START_T (pin J14) as a LEVEL, not an edge. Everything that follows from
+ * that is in the note above StartupArm().
+ */
+u32  ReadSTARTT(void);
+
 /*===========================================================================
  * Measurement
  *=========================================================================*/
@@ -210,6 +373,53 @@ int  ReadFr_TimestampMode(char *Freq);      /* DMA timestamps + least squares;
                                                turns on the /4 prescaler above
                                                the Nyquist limit and scales the
                                                result back up */
+
+/*===========================================================================
+ * Oscillator start-up time
+ *
+ * Two commands, because the trigger arrives between them.
+ *
+ * StartupArm() validates the configuration, hands the job to the measurement
+ * task and returns immediately, so the instrument is watching CTR_START_T
+ * within microseconds of the command being parsed. The task then anchors
+ * t = 0 on the rising edge, captures STARTUP_ENTRIES gap-free timestamps
+ * covering STARTUP_SPAN, cuts them into non-overlapping windows of whatever
+ * entry count STARTUP_WIN works out to, fits each by least squares for one
+ * frequency point, and takes the midpoint of the first window from which
+ * STARTUP_HOLD consecutive windows all sit within +/-PPM_RANGE of FREF.
+ *
+ * StartupWait() blocks until that finishes and returns the start-up time in
+ * milliseconds measured from the trigger, or one of the negative ST_ERR_*
+ * codes. Calling it again returns the same answer; the result is only
+ * discarded by the next StartupArm().
+ *
+ * A refused arm is reported the same way. STARTUP:INIT is a write with no
+ * response, so "the fixture VCC was still connected" cannot come back at
+ * arming time -- StartupArm() publishes the matching ST_ERR_* as the pending
+ * result instead, and StartupWait() hands it to the host. One return value
+ * covers both "the crystal never settled" and "the instrument never got to
+ * look".
+ *
+ * The frequency curve, the first-edge time and the resolution actually
+ * achieved go to the serial console; the return value is the single number
+ * the criterion produces.
+ *
+ * Ordering matters and is not optional:
+ *
+ *   - CTR_START_T is read as a LEVEL, not an edge. Arm FIRST, then power the
+ *     DUT. Arming while the pin is already high is refused
+ *     (ST_ARM_ALREADY_HIGH) rather than silently measured from an origin that
+ *     is really "whenever the command arrived".
+ *   - Drive the pin low again before the next measurement. On the usual
+ *     fixture, where CTR_START_T follows the DUT's VCC rail, opening VCC does
+ *     this for free.
+ *
+ * See the task priority note above for what the instrument does and does not
+ * do to the network while a measurement is in flight.
+ *=========================================================================*/
+int    InitStartupTask(void);   /* called once by init_freqcounter() */
+int    StartupArm(void);        /* returns immediately; ST_ARM_* */
+double StartupWait(void);       /* blocks; ms, or a negative ST_ERR_* */
 
 /*===========================================================================
  * Lower level, exposed for diagnostics

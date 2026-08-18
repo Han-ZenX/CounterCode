@@ -9,6 +9,8 @@
 
 #include "freq_counter_core.h"
 #include "tdc_calib.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "sleep.h"
 #include <stdlib.h>
 
@@ -17,7 +19,9 @@
  *=========================================================================*/
 int    FREF            = 1000000;   /* 1 MHz */
 double GATE_TIME       = 100.0;     /* ms */
-double PPM_RANGE       = 0.0;       /* ppm, reserved: not used yet */
+double PPM_RANGE       = 0.0;       /* ppm, the start-up criterion */
+double STARTUP_SPAN    = STARTUP_SPAN_DEFAULT;  /* ms */
+double STARTUP_WIN     = STARTUP_WIN_DEFAULT;   /* us */
 
 u32 g_clk_fs_freq    = CLK_FS_FREQ;
 u32 g_clk_fs_freq_sd = CLK_FS_FREQ;
@@ -32,6 +36,10 @@ static XAxiDma g_dma;
 static int     g_dma_ready = 0;
 
 static u64 g_ts_buf[TS_BUF_ENTRIES] __attribute__((aligned(32)));
+
+/* Start-up capture buffer, 512 KB. Kept separate from g_ts_buf so the
+   ordinary measurement path keeps its own bounds. */
+static u64 g_startup_buf[STARTUP_ENTRIES] __attribute__((aligned(32)));
 
 /*===========================================================================
  * Small helpers
@@ -191,6 +199,11 @@ u32 ReadSTATUS1(void)
     return COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR, COUNTER_SIG_REG1);
 }
 
+u32 ReadSTARTT(void)
+{
+    return COUNTER_SIG_mReadReg(COUNTER_SIG_BASEADDR, COUNTER_SIG_REG2);
+}
+
 /*===========================================================================
  * Init
  *=========================================================================*/
@@ -262,6 +275,9 @@ int init_freqcounter(void)
 
     if (InitTsDma() != XST_SUCCESS)
         xil_printf("[CORE] DMA init failed, timestamp mode unavailable\r\n");
+
+    if (InitStartupTask() != 0)
+        xil_printf("[CORE] start-up measurement unavailable\r\n");
 
     COUNTER_CORE_Reg_SelfTest((void *)COUNTER_CORE_BASEADDR);
     DumpCoreStatus();
@@ -1063,6 +1079,7 @@ static const char *ts_err_text(int rc)
     case TS_ERR_OVERFLOW:  return "gap inside the captured buffer";
     case TS_ERR_PARAM:     return "bad parameters";
     case TS_ERR_NO_DMA:    return "DMA not initialized";
+    case TS_ERR_TRIGGER:   return "CTR_START_T never went high";
     default:               return "unknown";
     }
 }
@@ -1676,4 +1693,601 @@ void PrintTdcCalibTable(int rounds)
     xil_printf("};\r\n");
 
     xil_printf("\r\n===== end =====\r\n");
+}
+
+/*===========================================================================
+ * Oscillator start-up time
+ *
+ * The method is the one in Staffan Johansson, "Start-up Measurements on
+ * Oscillators", Pendulum Instruments white paper No.2, Nov 2007: capture
+ * continuous timestamps across the switch-on transient, recover f(t) from
+ * them afterwards, and read off when the frequency enters the tolerance band.
+ * What the paper does with a capacitor coupling the supply edge into input A,
+ * this instrument does with the dedicated CTR_START_T pin.
+ *
+ * The paper's "measuring time determines resolution" is STARTUP_WIN here:
+ * the window span sets the time resolution and, inversely, the frequency
+ * resolution. Their product is a constant fixed by the TDC, which is why
+ * sub-cycle interpolation is what makes a ppm criterion and a sub-millisecond
+ * time resolution possible at the same time.
+ *=========================================================================*/
+
+/*
+ * One timestamp as seconds since TS_RST. wrap_offset accounts for rollovers
+ * of the 32-bit coarse counter and is maintained by the caller.
+ *
+ * The fine part comes from the code density table, not tdc / NUM_TAPS -- see
+ * the note in ComputeFreqFromTimestamps.
+ */
+static double startup_ts_seconds(u64 word, u32 f_s, double wrap_offset)
+{
+    u32 coarse = COUNTER_CORE_TS_COARSE(word);
+    u32 tdc    = COUNTER_CORE_TS_TDC(word);
+    double period_ps = 1.0e12 / (double)f_s;
+
+    return ((double)coarse + (double)tdc_phase_ts[tdc] / period_ps)
+           / (double)f_s + wrap_offset;
+}
+
+/*===========================================================================
+ * Triggered capture
+ *
+ * Same hardware as CaptureTimestamps, different order, and the order is the
+ * entire reason this is a separate function.
+ *
+ * CaptureTimestamps pulses TS_RST first and only then poisons the buffer and
+ * configures the DMA. That puts an indeterminate few hundred microseconds
+ * between the coarse zero point and the actual start of capture. For an
+ * ordinary measurement nothing depends on where zero is; here it is added
+ * directly to the reported start-up time.
+ *
+ * So everything slow happens before the trigger is even looked at, and the
+ * trigger is followed by exactly two AXI writes. Arming the DMA that early is
+ * safe: stream_en is driven by ts_en (counter_core.v), so with TS_EN low the
+ * engine hands nothing to the stream and the channel simply waits for TVALID.
+ *
+ * Returns the number of entries captured, or a negative TS_ERR_*.
+ *=========================================================================*/
+static int StartupCapture(u64 *buf, u32 edge_skip, u32 cap_timeout_ms)
+{
+    const u32 bytes = (u32)STARTUP_ENTRIES * 8u;
+    u32 dma_base = XPAR_AXI_DMA_0_BASEADDR;
+    int remaining;
+    int i;
+
+    if (!g_dma_ready)
+        return TS_ERR_NO_DMA;
+
+    /*--- Phase A: preparation, all of it before the trigger ---*/
+    core_wr(COUNTER_CORE_CTRL_OFFSET, 0);
+
+    XAxiDma_WriteReg(dma_base, XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET,
+                     XAXIDMA_IRQ_ALL_MASK);
+
+    core_wr(COUNTER_CORE_EDGE_SKIP_OFFSET, edge_skip);
+    core_wr(COUNTER_CORE_PKT_LEN_OFFSET, (u32)STARTUP_ENTRIES);
+
+    for (i = 0; i < STARTUP_ENTRIES; i++)
+        buf[i] = TS_POISON;
+    Xil_DCacheFlushRange((UINTPTR)buf, bytes);
+
+    if (XAxiDma_SimpleTransfer(&g_dma, (UINTPTR)buf, bytes,
+                               XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS)
+        return TS_ERR_DMA_START;
+
+    /*--- Phase B: busy poll the trigger ---
+     *
+     * No sleep. Every microsecond spent not noticing the trigger lands in the
+     * start-up time. One AXI-Lite read is a few hundred nanoseconds, so
+     * detection is well under a microsecond.
+     *
+     * The timeout counts loop iterations at an assumed 0.5 us per read. It
+     * exists only so a missing trigger cannot hang the link forever, and
+     * being a factor of two out does not matter for that.
+     *
+     * Note this spins without yielding, for up to STARTUP_TRIG_TIMEOUT_MS,
+     * on whichever task called in. That is deliberate -- yielding would put
+     * the scheduler between the trigger and t = 0 -- but it does mean tasks
+     * at or below this priority are starved for the duration. Keep the
+     * trigger timeout in mind if anything else on the system has a deadline
+     * shorter than it.
+     */
+    remaining = (int)STARTUP_TRIG_TIMEOUT_MS * 2000;
+    while (ReadSTARTT() == 0) {
+        if (--remaining <= 0) {
+            XAxiDma_Reset(&g_dma);
+            while (!XAxiDma_ResetIsDone(&g_dma)) { }
+            return TS_ERR_TRIGGER;
+        }
+    }
+
+    /*--- Phase C: anchor t = 0 ---
+     *
+     * Two AXI writes, nothing between them. TS_RST zeroes the coarse counter
+     * and the sequence numbers and flushes the FIFOs; TS_EN releases it and
+     * starts capture. No usleep on purpose: TS_RST needs a few clk_fs cycles
+     * and the interval between two AXI writes already exceeds that by an
+     * order of magnitude.
+     */
+    core_wr(COUNTER_CORE_CTRL_OFFSET, COUNTER_CORE_CTRL_TS_RST);
+    core_wr(COUNTER_CORE_CTRL_OFFSET, COUNTER_CORE_CTRL_TS_EN);
+
+    /*--- Phase D: wait for the buffer to fill ---
+     *
+     * IOC rather than XAxiDma_Busy(), for the reason spelled out in
+     * CaptureTimestamps: the tail-end overrun halts the channel and a halted
+     * channel never reports idle.
+     */
+    remaining = (int)cap_timeout_ms * 10;
+    for (;;) {
+        u32 sr = XAxiDma_ReadReg(dma_base,
+                                 XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET);
+
+        if (sr & XAXIDMA_IRQ_IOC_MASK)
+            break;
+
+        if (--remaining <= 0) {
+            core_wr(COUNTER_CORE_CTRL_OFFSET, 0);
+            DumpDmaStatus();
+            Xil_DCacheInvalidateRange((UINTPTR)buf, bytes);
+            XAxiDma_Reset(&g_dma);
+            while (!XAxiDma_ResetIsDone(&g_dma)) { }
+            return TS_ERR_TIMEOUT;
+        }
+        usleep(100);
+    }
+
+    /*--- Phase E: stop and collect ---*/
+    core_wr(COUNTER_CORE_CTRL_OFFSET, 0);
+
+    {
+        u32 sr = XAxiDma_ReadReg(dma_base,
+                                 XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET);
+
+        XAxiDma_WriteReg(dma_base, XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET,
+                         sr & XAXIDMA_IRQ_ALL_MASK);
+
+        if (sr & XAXIDMA_HALTED_MASK) {
+            XAxiDma_Reset(&g_dma);
+            while (!XAxiDma_ResetIsDone(&g_dma)) { }
+        }
+    }
+
+    Xil_DCacheInvalidateRange((UINTPTR)buf, bytes);
+
+    return STARTUP_ENTRIES;
+}
+
+/*===========================================================================
+ * MeasureStartupTime -- see the note in freq_counter_core.h
+ *=========================================================================*/
+/*
+ * Runs on the measurement task only; StartupArm() has already checked FREF,
+ * PPM_RANGE, STARTUP_SPAN, STARTUP_WIN and the trigger level, so none of that
+ * is repeated here.
+ *
+ * NOTHING on the path from entry to the trigger busy poll may write to the
+ * serial console. The host writes STARTUP:INIT and then closes the fixture
+ * VCC without waiting for anything, so every microsecond spent here is
+ * microseconds during which the trigger could be missed -- and five lines at
+ * 115200 baud is about 20 ms, far more than a relay needs to close. The
+ * configuration is therefore reported after the capture, not before it. What
+ * remains on that path is the arithmetic, two register writes, and the poison
+ * pass over the buffer inside StartupCapture (about 1-2 ms for 512 KB plus
+ * the cache flush).
+ */
+static double MeasureStartupTime(void)
+{
+    const u64 *ts;
+    u32 f_s, safe_limit, prescale, edge_skip, lost, prev_coarse;
+    double f_nom, f_eff, span_s, skip_plus1;
+    double entry_interval_s, win_span_s, actual_span_ms, delta_ppm;
+    double wrap_period, wrap_offset, t_first, t_settle, t_run_start;
+    int rc, count, n_win, w, run, step, i;
+    int win, win_raw;
+    char line[128];
+
+    f_s   = GetClkFsFreq();
+    f_nom = (double)FREF;
+
+    /* Same Nyquist rule, and the same obligation to scale back up, as
+       ReadFr_TimestampMode */
+    safe_limit = (u32)((double)(f_s / 2u) * 0.9);
+    prescale = ((u32)FREF > safe_limit) ? COUNTER_CORE_PRESCALE_RATIO : 1u;
+    set_prescale(prescale);
+    set_src_sel(0u);
+
+    /* edge_skip such that STARTUP_ENTRIES entries cover STARTUP_SPAN.
+     *
+     * ceil, so the span is never short of what was asked for. Below
+     * f_eff = STARTUP_ENTRIES / span (512 kHz at the default 128 ms) this
+     * bottoms out at 0 and the span stretches instead -- a 32.768 kHz tuning
+     * fork gets 2.0 s, which is what a device that takes a second to start
+     * actually needs. */
+    f_eff      = f_nom / (double)prescale;
+    span_s     = STARTUP_SPAN / 1000.0;
+    skip_plus1 = ceil(f_eff * span_s / (double)STARTUP_ENTRIES);
+    if (skip_plus1 < 1.0)
+        skip_plus1 = 1.0;
+    edge_skip = (u32)skip_plus1 - 1u;
+
+    /* What the hardware will actually deliver. The timeout and the reported
+       resolution have to follow this, not the requested span: rounding
+       edge_skip up to an integer can stretch the span by a third around
+       1 MHz, and much less above 10 MHz. */
+    entry_interval_s = skip_plus1 / f_eff;
+    actual_span_ms   = entry_interval_s * (double)STARTUP_ENTRIES * 1000.0;
+
+    /* Window size from the requested time resolution.
+     *
+     * The entry count per window is derived, not configured: what the
+     * operator cares about is the time resolution, and the count that
+     * produces it depends on the span. Taking the count as the parameter
+     * instead would mean every change of span silently changes the
+     * resolution.
+     *
+     * Clamped at both ends, and a clamp is reported below rather than applied
+     * quietly -- a window that had to be widened is a different measurement
+     * from the one that was asked for. */
+    win_raw = (int)(STARTUP_WIN * 1.0e-6 / entry_interval_s + 0.5);
+    win     = win_raw;
+
+    if (win < STARTUP_WIN_MIN_N)
+        win = STARTUP_WIN_MIN_N;
+    else if (win > STARTUP_WIN_MAX_N)
+        win = STARTUP_WIN_MAX_N;
+
+    win_span_s = entry_interval_s * (double)win;
+
+    /* Frequency resolution of one window: sigma_t * sqrt(12) / (sqrt(N) * W).
+       Reported rather than enforced -- the operator decides whether the band
+       is meaningful against it. */
+    delta_ppm = STARTUP_SIGMA_T * 3.4641016
+                / (sqrt((double)win) * win_span_s) * 1.0e6;
+
+    /* Capture timeout. The span itself is only part of what has to fit: the
+       clock starts at the trigger but the first edge arrives whenever the DUT
+       begins to oscillate, and the transient stretches the early intervals on
+       top of that (edge_skip is sized for the nominal frequency, and a
+       crystal that is still climbing produces those edges more slowly). The
+       5 s of headroom is what covers the first-edge delay; a device slower
+       than that reports a capture failure rather than a wrong number.
+
+       The hard ceiling above this is the coarse counter, which rolls over
+       13.7 s after the trigger. */
+    rc = StartupCapture(g_startup_buf, edge_skip,
+                        (u32)(actual_span_ms * 2.0) + 5000u);
+
+    /* Reporting starts here, not above: see the note on the function. */
+    snprintf(line, sizeof line, "[ST] skip=%lu span=%.1f ms entry=%.3f us",
+             (unsigned long)edge_skip, actual_span_ms,
+             entry_interval_s * 1.0e6);
+    xil_printf("%s\r\n", line);
+    snprintf(line, sizeof line, "[ST] window=%d entries = %.2f us (asked %.2f)",
+             win, win_span_s * 1.0e6, STARTUP_WIN);
+    xil_printf("%s\r\n", line);
+    snprintf(line, sizeof line,
+             "[ST] resolution=%.4f ppm  band=+/-%.4f ppm",
+             delta_ppm, PPM_RANGE);
+    xil_printf("%s\r\n", line);
+
+    if (win != win_raw) {
+        snprintf(line, sizeof line,
+                 "[ST] %.2f us would need %d entries per window, outside"
+                 " %d..%d", STARTUP_WIN, win_raw,
+                 STARTUP_WIN_MIN_N, STARTUP_WIN_MAX_N);
+        xil_printf("%s\r\n", line);
+
+        if (win_raw < STARTUP_WIN_MIN_N)
+            xil_printf("[ST] shorten STARTUP:SPAN to reach the requested"
+                       " resolution\r\n");
+    }
+
+    if (PPM_RANGE <= delta_ppm)
+        xil_printf("[ST] band is at or below the per-window resolution;"
+                   " the result will be noise limited\r\n");
+
+    xil_printf("[ST] armed, waiting for CTR_START_T\r\n");
+
+    if (rc == TS_ERR_TRIGGER) {
+        xil_printf("[ST] CTR_START_T never went high\r\n");
+        return ST_ERR_TRIG;
+    }
+    if (rc < 0) {
+        xil_printf("[ST] capture failed: %s\r\n", ts_err_text(rc));
+        return ST_ERR_CAPTURE;
+    }
+
+    /* Drop a stale leading entry.
+     *
+     * counter_core.v exports stream_aresetn so one TS_RST flushes the
+     * downstream stream FIFO too, but whether that is wired is a property of
+     * the bitstream, so the guard stays.
+     *
+     * The coarse test CaptureTimestamps uses would be wrong here. This
+     * capture legitimately begins at a large coarse value -- the first
+     * detectable edge can be milliseconds after t = 0 -- and after a rollover
+     * it would discard good data. seq is unambiguous: TS_RST restarts it at
+     * 0, so a leftover entry carries the previous capture's high value. */
+    ts    = g_startup_buf;
+    count = rc;
+
+    if (count >= 2 &&
+        COUNTER_CORE_TS_SEQ(ts[0]) > COUNTER_CORE_TS_SEQ(ts[1])) {
+        xil_printf("[ST] dropped stale leading entry (seq %lu)\r\n",
+                   (unsigned long)COUNTER_CORE_TS_SEQ(ts[0]));
+        ts++;
+        count--;
+    }
+
+    if (ts[count - 1] == TS_POISON) {
+        xil_printf("[ST] short transfer: the buffer tail was never written\r\n");
+        return ST_ERR_CAPTURE;
+    }
+
+    /* Continuity by seq, not by VerifyContinuity.
+     *
+     * VerifyContinuity infers the normal coarse spacing from the smallest
+     * increment in the series and flags everything several times larger as a
+     * gap. That is exactly right for a steady input and exactly wrong here:
+     * during start-up the frequency climbs by design, so the early intervals
+     * are legitimately much wider than the settled ones and every one of them
+     * would read as a hole.
+     *
+     * seq catches a buffer stitched from two captures, which is the failure
+     * that would actually corrupt the time axis. It cannot see dropped edges
+     * -- discarded edges take no sequence number -- so LOST_COUNT is checked
+     * as well below. */
+    for (i = 1; i < count; i++) {
+        u32 d = (COUNTER_CORE_TS_SEQ(ts[i])
+                 - COUNTER_CORE_TS_SEQ(ts[i - 1])) & 0x3FFFFFu;
+
+        if (d != 1u) {
+            xil_printf("[ST] sequence break at %d (step %lu)\r\n",
+                       i, (unsigned long)d);
+            return ST_ERR_CAPTURE;
+        }
+    }
+
+    lost = core_rd(COUNTER_CORE_LOST_COUNT_OFFSET);
+    if (lost != 0)
+        xil_printf("[ST] %lu edges dropped after the buffer filled,"
+                   " data intact\r\n", (unsigned long)lost);
+
+    /*--- f(t) and the criterion ---*/
+    wrap_period = 4294967296.0 / (double)f_s;
+    wrap_offset = 0.0;
+    prev_coarse = COUNTER_CORE_TS_COARSE(ts[0]);
+
+    t_first     = startup_ts_seconds(ts[0], f_s, 0.0);
+    t_settle    = ST_NOT_SETTLED;
+    t_run_start = 0.0;
+    run         = 0;
+
+    n_win = count / win;
+    step  = n_win / 64;             /* thin the console trace to ~64 lines */
+    if (step < 1)
+        step = 1;
+
+    for (w = 0; w < n_win; w++) {
+        const u64 *seg = &ts[w * win];
+        u32 c0 = COUNTER_CORE_TS_COARSE(seg[0]);
+        u32 c1 = COUNTER_CORE_TS_COARSE(seg[win - 1]);
+        double t0, t1, t_mid, f, ppm;
+
+        /* Unwrap the coarse counter. It rolls over every 13.7 s at 312.5 MHz,
+           which a capture only meets when the first edge happens to fall near
+           the boundary. One window is far too short to contain two. */
+        if (c0 < prev_coarse)
+            wrap_offset += wrap_period;
+        t0 = startup_ts_seconds(seg[0], f_s, wrap_offset);
+
+        if (c1 < c0)
+            wrap_offset += wrap_period;
+        t1 = startup_ts_seconds(seg[win - 1], f_s, wrap_offset);
+
+        prev_coarse = c1;
+
+        /* Referred to the middle of the window: the fit returns the average
+           frequency over the window, which is the paper's "timestamp value +
+           50% of measuring time". */
+        t_mid = 0.5 * (t0 + t1);
+
+        f = ComputeFreqFromTimestamps(seg, win, f_s)
+            * skip_plus1 * (double)prescale;
+
+        if (f <= 0.0) {
+            run = 0;
+            continue;
+        }
+
+        ppm = (f - f_nom) / f_nom * 1.0e6;
+
+        if (w % step == 0) {
+            snprintf(line, sizeof line, "[ST] %10.4f ms %16.3f Hz %+11.3f ppm",
+                     t_mid * 1000.0, f, ppm);
+            xil_printf("%s\r\n", line);
+        }
+
+        /* First window from which STARTUP_HOLD consecutive windows all sit
+           inside the band. Scanning forward and taking the start of the first
+           run that reaches the required length gives the earliest such
+           window, so no second pass is needed -- which matters, because
+           holding one f(t) point per window would need 8 KB of stack. */
+        if (fabs(ppm) <= PPM_RANGE) {
+            if (run == 0)
+                t_run_start = t_mid;
+            run++;
+            if (run >= STARTUP_HOLD) {
+                t_settle = t_run_start * 1000.0;
+                break;
+            }
+        } else {
+            run = 0;
+        }
+    }
+
+    snprintf(line, sizeof line, "[ST] first detectable edge at %.4f ms",
+             t_first * 1000.0);
+    xil_printf("%s\r\n", line);
+
+    if (t_settle < 0.0) {
+        snprintf(line, sizeof line,
+                 "[ST] never settled within %.1f ms of coverage",
+                 actual_span_ms);
+        xil_printf("%s\r\n", line);
+    } else {
+        snprintf(line, sizeof line, "[ST] start-up time %.4f ms", t_settle);
+        xil_printf("%s\r\n", line);
+    }
+
+    return t_settle;
+}
+
+/*===========================================================================
+ * Measurement task
+ *
+ * The trigger arrives between the two SCPI commands, which is why the
+ * measurement cannot run on the SCPI task. See the priority note in
+ * freq_counter_core.h for why the task idles at one priority and works at
+ * another; that split is what keeps StartupArm() from turning into the
+ * blocking call the two-command design exists to avoid.
+ *=========================================================================*/
+#define STARTUP_IDLE     0
+#define STARTUP_ARMED    1
+#define STARTUP_RUNNING  2
+#define STARTUP_DONE     3
+
+static volatile int    g_startup_state  = STARTUP_IDLE;
+static volatile double g_startup_result = 0.0;
+static TaskHandle_t    g_startup_task   = NULL;
+
+/*
+ * Publish a result to whoever is waiting in StartupWait().
+ *
+ * The barrier is what makes the pair safe to read from another task: the
+ * reader tests the state and only then touches the double, so the two stores
+ * must not become visible in the other order. volatile alone orders the
+ * compiler, not the core.
+ */
+static void startup_publish(double result)
+{
+    g_startup_result = result;
+    __asm__ volatile ("dmb" ::: "memory");
+    g_startup_state  = STARTUP_DONE;
+}
+
+static void startup_task(void *arg)
+{
+    (void)arg;
+
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        /* Raised only now. At creation priority the notify in StartupArm()
+           does not preempt its caller, so that function really does return
+           immediately; from here on the trigger poll must not be interrupted
+           by anything, lwIP included. */
+        vTaskPrioritySet(NULL, STARTUP_TASK_PRIO_RUN);
+
+        g_startup_state = STARTUP_RUNNING;
+        startup_publish(MeasureStartupTime());
+
+        vTaskPrioritySet(NULL, STARTUP_TASK_PRIO_IDLE);
+    }
+}
+
+int InitStartupTask(void)
+{
+    if (g_startup_task != NULL)
+        return 0;
+
+    if (xTaskCreate(startup_task, "startup", STARTUP_TASK_STACK, NULL,
+                    STARTUP_TASK_PRIO_IDLE, &g_startup_task) != pdPASS) {
+        g_startup_task = NULL;
+        xil_printf("[ST] measurement task creation failed\r\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * Refuse an arm, and leave the reason where StartupWait() will find it.
+ *
+ * STARTUP:INIT carries no response, so this is the only route back to the
+ * host: "the fixture VCC was still connected" has to arrive as the answer to
+ * STARTUP:TIME?, alongside the real measurement results.
+ */
+static int startup_refuse(int code, double reason, const char *why)
+{
+    xil_printf("[ST] %s\r\n", why);
+    startup_publish(reason);
+    return code;
+}
+
+int StartupArm(void)
+{
+    if (g_startup_task == NULL)
+        return startup_refuse(ST_ARM_NO_TASK, ST_ERR_NO_TASK,
+                              "measurement task not running");
+
+    if (g_startup_state == STARTUP_ARMED ||
+        g_startup_state == STARTUP_RUNNING) {
+        /* Deliberately not published: overwriting the state here would
+           discard the measurement that is actually in flight. The waiting
+           host gets that one's result, which is the more useful answer. */
+        xil_printf("[ST] a measurement is still running; INIT ignored\r\n");
+        return ST_ARM_BUSY;
+    }
+
+    if (FREF <= 0 || PPM_RANGE <= 0.0 ||
+        STARTUP_SPAN <= 0.0 || STARTUP_WIN <= 0.0)
+        return startup_refuse(ST_ARM_CONFIG, ST_ERR_CONFIG,
+                              "set CONF:FREQ, PPM, STARTUP:SPAN and"
+                              " STARTUP:WIN first");
+
+    /* The pin is read as a level. High here means the fixture never opened
+       the DUT's VCC, so t = 0 would land on this command rather than on
+       power-up -- a plausible looking number that measures nothing. */
+    if (ReadSTARTT() != 0)
+        return startup_refuse(ST_ARM_ALREADY_HIGH, ST_ERR_ALREADY_HIGH,
+                              "CTR_START_T is already high; open the fixture"
+                              " VCC before arming");
+
+    g_startup_state = STARTUP_ARMED;
+    xTaskNotifyGive(g_startup_task);
+
+    return ST_ARM_OK;
+}
+
+double StartupWait(void)
+{
+    u32 waited = 0;
+
+    if (g_startup_state == STARTUP_IDLE)
+        return ST_ERR_NOT_ARMED;
+
+    /* Polling rather than a semaphore: the wait is tens of milliseconds at
+       best and tens of seconds at worst, so the poll costs nothing, and it
+       keeps the result path down to one pair of variables that the console
+       diagnostics can read too.
+
+       The elapsed count only advances while this task actually runs, and the
+       measurement task outranks it for the duration. That makes the timeout
+       longer than nominal rather than shorter, which is the safe direction --
+       it can never cut a measurement short. */
+    while (g_startup_state != STARTUP_DONE) {
+        if (waited >= STARTUP_WAIT_TIMEOUT_MS) {
+            xil_printf("[ST] no result after %lu ms\r\n",
+                       (unsigned long)waited);
+            return ST_ERR_WAIT_TIMEOUT;
+        }
+
+        vTaskDelay(STARTUP_WAIT_POLL_MS / portTICK_RATE_MS);
+        waited += STARTUP_WAIT_POLL_MS;
+    }
+
+    __asm__ volatile ("dmb" ::: "memory");
+    return g_startup_result;
 }
