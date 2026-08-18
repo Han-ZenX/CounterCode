@@ -66,7 +66,7 @@ hdl/Counter_Core_v1_0.v             顶层：IBUFDS + BUFG 接收 LVDS 差分时
 ├── src/counter_core.v              测量核心互连，统一三个时钟域的复位与 CDC
 │   ├── src/ts_engine.v             gap-free 时间戳引擎 + 4096 深异步 FIFO
 │   │   └── src/tdc.v               CARRY4 延迟链 TDC
-│   ├── src/eq_counter.v            等精度计数 + 硬件闸门（高频退路）
+│   ├── src/eq_counter.v            等精度计数 + 硬件闸门（保留，仅 START_T 与诊断）
 │   │   └── src/tdc.v
 │   └── src/cdc.v                   复位同步 / 电平同步 / 计数器跨域
 └── hdl/Counter_Core_v1_0_M_AXIS.v  64 位时间戳流 → axis_data_fifo → DMA
@@ -109,7 +109,8 @@ FreqCounterOS/src/
 
 ## 测量原理
 
-主路径是 gap-free 连续时间戳，等精度计数作为超奈奎斯特频段的退路。
+测频统一走 gap-free 连续时间戳；超奈奎斯特频段靠硬件四分频进入同一条路径。
+等精度计数保留但不再用于测频。
 
 ### 1. 时间戳引擎（主路径）
 
@@ -133,7 +134,7 @@ gap-free 的语义是"要么一条不丢，要么明确告诉你丢在哪"：每
 
 99 MHz 下 `edge_skip=0` 不可行（792 MB/s 超 HP0 带宽），见「已知问题 2.2」。
 
-### 2. 等精度计数（高频退路）
+### 2. 等精度计数（保留，不用于测频）
 
 `eq_counter.v`。闸门由 `clk_fs` 域硬件计数器产生，宽度精确等于 `GATE_LEN`
 个基准时钟周期 —— 不再依赖软件 `usleep`，基准侧因此没有 ±1 量化误差
@@ -165,16 +166,22 @@ f_test = f_s × (EQ_TEST + tdc_rise/256 - tdc_fall/256) / EQ_STAND
 
 ### 模式选择
 
-`ReadFr()` 按参考频率 `FREF` 分流：
+只有一条测频路径。`ReadFr_TimestampMode()` 按参考频率 `FREF` 决定是否开硬件四分频：
 
 ```
 safe_limit = (f_s / 2) × 0.9 = 140.625 MHz     // 奈奎斯特的 90%
-FREF >  safe_limit  →  ReadFr_EqualPrecision()  等精度 + 硬件闸门
-FREF <= safe_limit  →  ReadFr_TimestampMode()   时间戳 + DMA + 最小二乘
+FREF >  safe_limit  →  PRESCALE.DIV4 = 1，被测信号四分频，结果乘 4
+FREF <= safe_limit  →  PRESCALE.DIV4 = 0，直接送引擎
 ```
 
-时间戳法在 1/122 的时间里拿到好 14 倍的精度，但被测信号必须在基准时钟域
-可采样，故高频段退回等精度法。
+被测信号必须在基准时钟域可采样（高、低电平各长于 3.2 ns），四分频把超奈奎斯特的输入
+拉回这个窗口。分频不损失精度：分频后的上升沿**就是**输入的上升沿，只多一级触发器的
+固定延迟，而该延迟在最小二乘斜率里完全抵消。上限与约束见
+[interface_spec.md 3.4](ip_repo/Counter_Core/Counter_Core_1.0/doc/interface_spec.md)。
+
+等精度法已从分派中移除：它的不确定度就是 ±1 计数，350 MHz / 100 ms 闸门为 0.029 ppm，
+而时间戳法同闸门可达 0.00004 ppm。`ReadFr_EqualPrecision()` 保留给 START_T、
+重复性诊断和分频通路的交叉验证。
 
 时间戳法按 `GATE_TIME` 自适应设置 `edge_skip`，让 4096 条样本铺满整个闸门时间。
 
@@ -236,8 +243,9 @@ GW=192.168.1.1
 | 0x1C | `EQ_TEST` | R | 等精度被测计数 |
 | 0x20 | `TDC_GATE` | R | [7:0] 闸门上升沿相位，[15:8] 下降沿相位 |
 | 0x24 | `FIFO_LEVEL` | R | FIFO 中未取走的条目数 |
-| 0x28 | `VERSION` | R | 魔数 `0x43430100` |
+| 0x28 | `VERSION` | R | 魔数 `0x43430101` |
 | 0x2C | `TS_PKT_LEN` | R/W | M_AXIS 包长（拍）。**必须等于 DMA buffer 条数，填 0 会导致传输永不结束** |
+| 0x30 | `PRESCALE` | R/W | bit0 `DIV4_EN`，被测信号四分频后送时间戳引擎。只能在 `TS_EN` 为低时改写 |
 
 时间戳格式（64 位，DMA 写入 DDR）：
 

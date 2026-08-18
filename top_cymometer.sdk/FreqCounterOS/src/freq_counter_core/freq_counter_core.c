@@ -49,6 +49,28 @@ static inline u32 core_rd(u32 off)
     return COUNTER_CORE_mReadReg(COUNTER_CORE_BASEADDR, off);
 }
 
+/*
+ * Hardware prescaler for the signal under test: ratio 1 or
+ * COUNTER_CORE_PRESCALE_RATIO.
+ *
+ * Every function that starts a *timestamp* capture states which ratio it wants,
+ * because PRESCALE persists in the register file and nothing clears it between
+ * calls. Without that, one high-frequency ReadFr() would leave the divider on
+ * and every later capture -- including the TDC calibration runs -- would quietly
+ * measure a quarter of the input while looking perfectly healthy.
+ *
+ * The equal-precision path is unaffected either way: eq_counter clocks on the
+ * raw clk_fx and never sees the prescaler.
+ *
+ * Must be written before CTRL.TS_EN goes high: the divider select is
+ * combinational in the RTL, not latched at capture start the way EDGE_SKIP is.
+ */
+static void set_prescale(u32 ratio)
+{
+    core_wr(COUNTER_CORE_PRESCALE_OFFSET,
+            (ratio > 1u) ? COUNTER_CORE_PRESCALE_DIV4 : 0u);
+}
+
 /*===========================================================================
  * Reference clock calibration (SD card)
  *
@@ -228,6 +250,7 @@ int init_freqcounter(void)
 
     core_wr(COUNTER_CORE_EDGE_SKIP_OFFSET, 0);
     core_wr(COUNTER_CORE_PKT_LEN_OFFSET, 0);
+    set_prescale(1u);
 
     SetGate(100.0);
 
@@ -831,13 +854,18 @@ double ComputeFreqFromTimestamps(const u64 *buf, int count, u32 f_s)
  *
  * entries and edge_skip are chosen so the buffer is guaranteed to fill within
  * the gate time. In simple mode an under-filled buffer would simply time out.
+ *
+ * This is the only path that turns the hardware prescaler on, and it owns the
+ * whole set of consequences: the decision, the register write, the edge count
+ * the divided signal will actually produce, and scaling the result back up.
+ * Splitting those apart is how you get a reading exactly 4x off.
  *=========================================================================*/
 int ReadFr_TimestampMode(char *Freq)
 {
     int entries, rc, brk;
     u32 edge_skip;
     double expected_edges, freq;
-    u32 f_s, timeout_ms;
+    u32 f_s, timeout_ms, safe_limit, prescale;
 
     if (Freq == NULL) return -1;
 
@@ -848,8 +876,18 @@ int ReadFr_TimestampMode(char *Freq)
 
     f_s = GetClkFsFreq();
 
-    /* Edges the signal should produce during one gate */
-    expected_edges = (double)FREF * (GATE_TIME / 1000.0);
+    /* Above the Nyquist limit of the reference clock the engine cannot see
+       every edge -- it samples the input as data in the clk_fs domain -- so the
+       input is divided by 4 in hardware and the result scaled back up.
+       Precision does not suffer: the divided rising edges ARE input rising
+       edges, and the fit's precision comes from the time span, not the edge
+       rate. See the prescaler design note under doc/, section 5. */
+    safe_limit = (u32)((double)(f_s / 2u) * 0.9);
+    prescale = ((u32)FREF > safe_limit) ? COUNTER_CORE_PRESCALE_RATIO : 1u;
+    set_prescale(prescale);
+
+    /* Edges reaching the engine are the divided ones */
+    expected_edges = ((double)FREF / (double)prescale) * (GATE_TIME / 1000.0);
 
     if (expected_edges >= (double)TS_BUF_ENTRIES) {
         /* More edges than the buffer holds: thin them out. The 0.9 margin
@@ -898,7 +936,10 @@ int ReadFr_TimestampMode(char *Freq)
     }
 
     freq = ComputeFreqFromTimestamps(g_ts_buf, rc, f_s);
-    freq *= (double)(edge_skip + 1u);
+
+    /* Input periods spanned by one captured interval: edge_skip+1 of the
+       divided signal, each of which is prescale input periods */
+    freq *= (double)(edge_skip + 1u) * (double)prescale;
 
     if (freq <= 0.0) {
         sprintf(Freq, "0.00000\n");
@@ -912,18 +953,24 @@ int ReadFr_TimestampMode(char *Freq)
 /*===========================================================================
  * Dispatch
  *
- * Below the Nyquist limit of the reference clock the timestamp path is more
- * precise; above it, per-edge sampling is impossible and equal-precision is
- * the only option.
+ * There is only one measurement path now. Above the Nyquist limit the input is
+ * divided by 4 in hardware and the timestamp engine keeps working, which
+ * ReadFr_TimestampMode handles on its own.
+ *
+ * Equal-precision used to take over above the limit. It was dropped because it
+ * has nothing to offer: its uncertainty is the +/-1 count, 1/(f_x * T_gate),
+ * which is 0.029 ppm at 350 MHz with a 100 ms gate -- exactly the figure
+ * measured on hardware, meaning the TDC correction that was supposed to improve
+ * on it never contributed anything (the gate TDC values are still not
+ * trustworthy, see interface_spec.md 7.2). The timestamp fit reaches
+ * 0.00004 ppm over the same gate.
+ *
+ * ReadFr_EqualPrecision itself stays: ReadStartT and RepeatTest use it, and it
+ * is the independent cross-check for the prescaled path.
  *=========================================================================*/
 int ReadFr(char *Freq)
 {
-    u32 safe_limit = (u32)((double)(GetClkFsFreq() / 2u) * 0.9);
-
-    if ((u32)FREF > safe_limit)
-        return ReadFr_EqualPrecision(Freq);
-    else
-        return ReadFr_TimestampMode(Freq);
+    return ReadFr_TimestampMode(Freq);
 }
 
 /*===========================================================================
@@ -1028,6 +1075,10 @@ void DumpCoreStatus(void)
     xil_printf(" EQ_TEST    %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_EQ_TEST_OFFSET));
     xil_printf(" TDC_GATE   0x%08x\r\n", (unsigned int)core_rd(COUNTER_CORE_TDC_GATE_OFFSET));
     xil_printf(" FIFO_LEVEL %lu\r\n",  (unsigned long)core_rd(COUNTER_CORE_FIFO_LEVEL_OFFSET));
+    xil_printf(" PRESCALE   0x%08x  [div4=%d]\r\n",
+               (unsigned int)core_rd(COUNTER_CORE_PRESCALE_OFFSET),
+               (core_rd(COUNTER_CORE_PRESCALE_OFFSET)
+                & COUNTER_CORE_PRESCALE_DIV4) ? 1 : 0);
 }
 
 /*===========================================================================
@@ -1319,6 +1370,9 @@ void TimestampTest(int entries, u32 edge_skip)
         return;
     }
 
+    /* Diagnostics report the raw input, never a prescaled quarter of it */
+    set_prescale(1u);
+
     xil_printf("---- TimestampTest: %d entries, edge_skip=%lu ----\r\n",
                entries, (unsigned long)edge_skip);
     xil_printf(" reference  %lu Hz\r\n", (unsigned long)f_s);
@@ -1535,6 +1589,11 @@ static int tdc_collect_histogram(u32 *hist, int rounds,
 {
     int r, i, rc;
     int total = 0;
+
+    /* Code density must be measured on the raw input: the prescaler would cut
+       the edge rate by four and, more to the point, PRESCALE may still be set
+       from a preceding high-frequency ReadFr(). */
+    set_prescale(1u);
 
     for (i = 0; i < TDC_NUM_TAPS; i++)
         hist[i] = 0;

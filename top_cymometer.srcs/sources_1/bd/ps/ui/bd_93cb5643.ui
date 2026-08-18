@@ -51,8 +51,8 @@ levelinfo -pg 1 0 210 540 900 1190 1500 1830 2220 2480 -top 0 -bot 740
 "
 }
 {
-   "da_axi4_cnt":"83",
+   "da_axi4_cnt":"84",
    "da_board_cnt":"1",
-   "da_clkrst_cnt":"13",
+   "da_clkrst_cnt":"14",
    "da_ps7_cnt":"1"
 }

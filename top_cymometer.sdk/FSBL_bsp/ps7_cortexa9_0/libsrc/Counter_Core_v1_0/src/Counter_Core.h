@@ -32,6 +32,25 @@
 #define COUNTER_CORE_FIFO_LEVEL_OFFSET  0x24u   /* R   entries still in the FIFO */
 #define COUNTER_CORE_VERSION_OFFSET     0x28u   /* R   version magic */
 #define COUNTER_CORE_PKT_LEN_OFFSET     0x2Cu   /* R/W M_AXIS packet length in beats */
+#define COUNTER_CORE_PRESCALE_OFFSET    0x30u   /* R/W input prescaler */
+
+/****************** PRESCALE bits ********************/
+/*
+ * DIV4 divides the signal under test by 4 before the timestamp engine, so
+ * inputs above the clk_fs Nyquist limit can still be timestamped instead of
+ * falling back to equal-precision counting. Software must multiply the measured
+ * frequency by COUNTER_CORE_PRESCALE_RATIO when this is set.
+ *
+ * Only change it while CTRL.TS_EN is low: the divider select is combinational,
+ * not latched at capture start the way EDGE_SKIP is.
+ *
+ * This is a register of its own rather than a spare CTRL bit on purpose. Every
+ * CTRL write in the driver is absolute, not read-modify-write, so a bit here
+ * would be cleared by the capture sequence itself -- and the symptom would be a
+ * high-frequency reading exactly 4x low, with every self-check still passing.
+ */
+#define COUNTER_CORE_PRESCALE_DIV4      (1u << 0)
+#define COUNTER_CORE_PRESCALE_RATIO     4u
 
 /****************** CTRL bits ********************/
 #define COUNTER_CORE_CTRL_TS_EN         (1u << 0)  /* timestamp engine enable */
@@ -65,7 +84,14 @@
 #define COUNTER_CORE_TS_SEQ(w)          ((u32)((w) & 0x3FFFFFu))
 
 #define COUNTER_CORE_TDC_NUM_TAPS       256
-#define COUNTER_CORE_VERSION_MAGIC      0x43430100u
+/*
+ * Bumped from 0x43430100 when PRESCALE was added. init_freqcounter() tests this
+ * for equality, which is the whole point: new software on an old bitstream would
+ * write PRESCALE to an address that does not decode, the write would vanish, and
+ * every measurement above the Nyquist limit would read 4x low while all the
+ * continuity and self-check criteria still passed.
+ */
+#define COUNTER_CORE_VERSION_MAGIC      0x43430101u
 
 /****************** Register access ********************/
 #define COUNTER_CORE_mWriteReg(BaseAddress, RegOffset, Data) \

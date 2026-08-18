@@ -13,11 +13,13 @@
 <includePath path="#undef __thumb2__" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_SAT" removed="true"/>
 <includePath path="f:\xilinx\sdk\2018.3\gnu\aarch32\nt\gcc-arm-none-eabi\bin\../lib/gcc/arm-none-eabi/7.3.1/include-fixed"/>
+<includePath path="#undef __ARM_FEATURE_CMSE" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_FP16_SCALAR_ARITHMETIC" removed="true"/>
 <includePath path="#undef __THUMBEL__" removed="true"/>
 <includePath path="#undef __ARM_FP" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_CRYPTO" removed="true"/>
 <includePath path="f:\xilinx\sdk\2018.3\gnu\aarch32\nt\gcc-arm-none-eabi\bin\../lib/gcc/arm-none-eabi/7.3.1/../../../../arm-none-eabi/include"/>
+<includePath path="#undef __ARM_FEATURE_LDREX" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC" removed="true"/>
 <includePath path="#undef __ARM_FP16_FORMAT_IEEE" removed="true"/>
 <includePath path="#undef __ARM_FEATURE_UNALIGNED" removed="true"/>

@@ -93,8 +93,24 @@
  * coarse spacing. Both the continuity check and the delta statistics would
  * pass on stale content.
  *
- * A real timestamp can never equal this: the tdc field is 6 bits and bits
- * [24] and [25] cannot both be set alongside this seq pattern.
+ * The check is an exact 64-bit comparison, so what matters is that no real
+ * timestamp can ever equal this word. Decoded against the current layout
+ * (tdc [31:24], ovf [23], tdc_ok [22], seq [21:0]) the poison reads:
+ *
+ *   coarse 0xDEADBEEF = 3735928559 ticks = 11.96 s at 312.5 MHz
+ *   tdc 222, ovf 1, tdc_ok 0, seq 2997999
+ *
+ * seq is what rules it out, and it does so independently of frequency and gate
+ * time: CaptureTimestamps always issues TS_RST first, which zeroes seq_cnt, and
+ * a transfer delivers at most TS_BUF_ENTRIES entries -- so seq stays inside
+ * 0..4095, three orders of magnitude below the poison's. The coarse count says
+ * the same thing less tightly (no capture runs for 12 s).
+ *
+ * The earlier note here argued from "the tdc field is 6 bits and bits [24] and
+ * [25] cannot both be set". Those were the 64-tap field positions; the 256-tap
+ * layout moved tdc to 8 bits at [31:24] and pushed ovf/tdc_ok down to [23]/[22],
+ * so that reasoning no longer describes this word. The value itself is still
+ * fine, for the reason above.
  */
 #define TS_POISON               0xDEADBEEFDEADBEEFull
 
@@ -184,9 +200,18 @@ u32  ReadSTARTT(void);
  * Measurement
  *=========================================================================*/
 int  SetGate(double msec);
-int  ReadFr(char *Freq);                    /* dispatches on FREF */
-int  ReadFr_EqualPrecision(char *Freq);     /* hardware gate + TDC correction */
-int  ReadFr_TimestampMode(char *Freq);      /* DMA timestamps + least squares */
+int  ReadFr(char *Freq);                    /* the measurement, straight through */
+int  ReadFr_TimestampMode(char *Freq);      /* DMA timestamps + least squares;
+                                               turns on the /4 prescaler above
+                                               the Nyquist limit and scales the
+                                               result back up */
+/*
+ * Equal-precision measurement. No longer used for frequency readout -- its
+ * uncertainty is the +/-1 count, about 0.03 ppm at a 100 ms gate, against
+ * 0.00004 ppm for the timestamp fit. Kept for ReadStartT, RepeatTest, and as an
+ * independent cross-check of the prescaled path.
+ */
+int  ReadFr_EqualPrecision(char *Freq);
 
 double ReadStartT(char *Freq);
 void   InitStartT(void *p);
