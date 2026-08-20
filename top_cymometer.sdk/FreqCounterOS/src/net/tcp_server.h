@@ -26,8 +26,8 @@
  *
  */
 
-#ifndef __FREERTOS_TCP_SERVER_APP_H_
-#define __FREERTOS_TCP_SERVER_APP_H_
+#ifndef __TCP_SERVER_H_
+#define __TCP_SERVER_H_
 
 #include "lwipopts.h"
 #include "lwip/tcp.h"
@@ -39,7 +39,7 @@
 
 #include "xparameters.h"
 
-#include "scpi/scpi.h"
+#include "../scpi/scpi.h"
 
 /* Bytes taken from the socket in a single read() */
 #define RECV_BUF_SIZE 1500
@@ -61,4 +61,4 @@ void print_app_header(void);
 /* Start the SCPI server task. Returns as soon as the task exists. */
 void start_application(void);
 
-#endif /* __FREERTOS_TCP_SERVER_APP_H_ */
+#endif /* __TCP_SERVER_H_ */

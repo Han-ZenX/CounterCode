@@ -2,7 +2,7 @@
  * scpi.c
  *
  *  Command table and dispatcher. Replaces the two hand-written character-by-
- *  character parsers that used to live in uart.c and freertos_tcp_perf_server.c.
+ *  character parsers that used to live in uart.c and net/tcp_server.c.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -433,6 +433,30 @@ static int cmd_cal_ref_prep(const char *args, char *resp)
 }
 
 /*
+ * The counterpart to CAL:REF:PREP: hand the external 10 MHz back to the PLL
+ * and leave it locked there.
+ *
+ * With both pins high the 10 MHz on clk_10m also reaches the LMK5B12204's
+ * PRIREF_P/PRIREF_N inputs, so the PLL holds its 312.5 MHz output locked to
+ * the external standard rather than to the on-board OCXO. This is the state
+ * init_freqcounter() leaves behind, and the one to return to once a
+ * calibration is done -- CAL:REF:PREP drops PRIREF for the duration of
+ * CAL:REF? and nothing puts it back on its own.
+ *
+ * Re-acquiring lock takes time and nothing here waits for it. Leave a pause
+ * before the next measurement.
+ */
+static int cmd_cal_ref_lock(const char *args, char *resp)
+{
+	(void)args;
+
+	Set_CTR_REF_CLOCK(1);
+	Set_CTR_PRIREF(1);
+
+	return snprintf(resp, SCPI_RESP_MAX, "1\n");
+}
+
+/*
  * Measure the external 10 MHz reference on clk_10m, derive the true clk_fs
  * frequency from it and store that in FREQ.TXT.
  *
@@ -483,6 +507,7 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "SIG:STATUS1?",     cmd_sig_status1           },
 	{ "SIG:STARTT?",      cmd_sig_startt            },
 	{ "CAL:REF:PREP",     cmd_cal_ref_prep          },
+	{ "CAL:REF:LOCK",     cmd_cal_ref_lock          },
 	{ "CAL:REF:VAL?",     cmd_cal_ref_val           },
 	{ "CAL:REF?",         cmd_cal_ref               },
 	{ "CAL:TDC?",         cmd_cal_tdc               },

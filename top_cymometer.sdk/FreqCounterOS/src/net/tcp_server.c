@@ -28,7 +28,7 @@
 
 #include <string.h>
 
-#include "freertos_tcp_perf_server.h"
+#include "tcp_server.h"
 
 extern struct netif server_netif;
 

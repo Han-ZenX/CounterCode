@@ -17,8 +17,9 @@ ELFSIZE :=
 # Every subdirectory with source files must be described here
 SUBDIRS := \
 src/clock \
-src \
 src/freq_counter_core \
+src \
+src/net \
 src/scpi \
 src/uart \
 

@@ -7,17 +7,14 @@ LD_SRCS += \
 ../src/lscript.ld 
 
 C_SRCS += \
-../src/freertos_tcp_perf_server.c \
 ../src/iic_phyreset.c \
 ../src/main.c 
 
 OBJS += \
-./src/freertos_tcp_perf_server.o \
 ./src/iic_phyreset.o \
 ./src/main.o 
 
 C_DEPS += \
-./src/freertos_tcp_perf_server.d \
 ./src/iic_phyreset.d \
 ./src/main.d 
 

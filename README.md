@@ -91,7 +91,7 @@ hdl/Counter_Core_v1_0.v             顶层：IBUFDS + BUFG 接收 LVDS 差分时
 ```
 FreqCounterOS/src/
 ├── main.c                              FreeRTOS 启动、lwIP 初始化、静态 IP 配置
-├── freertos_tcp_perf_server.c          TCP 服务器 + 命令解析 (tcp_data_process)
+├── net/tcp_server.c                    SCPI over TCP 服务器（socket 收发 + 组行）
 ├── scpi/scpi.c                         SCPI 命令表与分发
 ├── freq_counter_core/                  测频层（对接 Counter_Core，当前使用）
 │   ├── freq_counter_core.c             DMA 时间戳 / 回归 / SD 卡校准
@@ -199,6 +199,11 @@ SD 卡缺失或解析失败时回退到理想值。
 校准固定用 1 s 闸门（与 `FREQ:GATE:TIME` 无关，内部临时覆盖后还回），耗时约 1.1 秒。
 命令要求 `CTR_STATUS0` 与 `CTR_STATUS1` 都为 1，否则不做任何测量；响应是 `1`（已写入 SD 卡）
 或 `0`（任何失败），反推出的频率值打印在串口。
+
+校准做完后发一条 `CAL:REF:LOCK` 把 `CTR_PRIREF` 置回 1（`CTR_REF_CLOCK` 保持 1），外部
+10 MHz 重新送到 `PRIREF_P` / `PRIREF_N`，PLL 把 312.5 MHz 锁定到它上面。这是
+`init_freqcounter()` 的上电状态，也是平时测量时该待的状态 —— `CAL:REF:PREP` 只负责断开，
+不会自己接回来。重新锁定需要时间，发完留一点间隔再测。
 
 原理是把比值的两端对调 —— 引擎测的始终是"输入的一个周期里装得下多少个 `clk_fs` 周期"，
 平时 `clk_fs` 是已知的一侧，换成一个按定义精确的 10 MHz 源之后，拟合结果就成了对 `clk_fs`
@@ -568,7 +573,7 @@ TCP 路径下 `*RST`、`*OPC?`、`CONF:FREQ <值>`、`FREQ:GATE:TIME <值>`
   （Xilinx 的 `usleep` 是忙等，不让出 CPU），产品构建应移除或用宏关闭
 - `FreqCounterOS/src/` 下部分 C 源文件的中文注释存在编码损坏
   （GBK 与 UTF-8 混编导致的乱码）。`freq_counter_core/` 与 `freq_counter/`
-  的注释已全部改为英文，其余文件（`uart.c`、`freertos_tcp_perf_server.c`）未处理
+  的注释已全部改为英文，其余文件（`uart.c`、`net/tcp_server.c`）未处理
 - `ip_repo/Counter_Core/` 下的 RTL **未经编译或仿真验证**，功能结论均来自
   上板实测。`sim/tb_counter_core.v` 可在 Vivado xsim 中运行，但 CARRY4 在
   功能仿真中延迟为 0，TDC 部分覆盖不到
