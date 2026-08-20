@@ -22,6 +22,7 @@ double GATE_TIME       = 100.0;     /* ms */
 double PPM_RANGE       = 0.0;       /* ppm, the start-up criterion */
 double STARTUP_SPAN    = STARTUP_SPAN_DEFAULT;  /* ms */
 double STARTUP_WIN     = STARTUP_WIN_DEFAULT;   /* us */
+int    STARTUP_TRACE   = STARTUP_TRACE_DEFAULT; /* console f(t) points */
 
 u32 g_clk_fs_freq    = CLK_FS_FREQ;
 u32 g_clk_fs_freq_sd = CLK_FS_FREQ;
@@ -2065,8 +2066,12 @@ static double MeasureStartupTime(void)
     run         = 0;
 
     n_win = count / win;
-    step  = n_win / 64;             /* thin the console trace to ~64 lines */
-    if (step < 1)
+
+    /* Console trace stride. step == 0 doubles as the disabled flag, which is
+       why the print below tests it before taking the modulus -- a plain
+       w % step would divide by zero with the trace off. */
+    step = (STARTUP_TRACE > 0) ? (n_win / STARTUP_TRACE) : 0;
+    if (STARTUP_TRACE > 0 && step < 1)
         step = 1;
 
     for (w = 0; w < n_win; w++) {
@@ -2103,7 +2108,7 @@ static double MeasureStartupTime(void)
 
         ppm = (f - f_nom) / f_nom * 1.0e6;
 
-        if (w % step == 0) {
+        if (step > 0 && w % step == 0) {
             snprintf(line, sizeof line, "[ST] %10.4f ms %16.3f Hz %+11.3f ppm",
                      t_mid * 1000.0, f, ppm);
             xil_printf("%s\r\n", line);

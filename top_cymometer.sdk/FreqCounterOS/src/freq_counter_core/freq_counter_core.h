@@ -196,6 +196,21 @@
 #define STARTUP_WIN_DEFAULT     10.0    /* us, target time resolution */
 #define STARTUP_WIN_MIN_N       8       /* fewest entries a window may hold */
 #define STARTUP_WIN_MAX_N       4096    /* keeps >= 16 windows in the capture */
+
+/*
+ * f(t) points written to the serial console after a measurement, 0 = none.
+ *
+ * Off by default because it is a diagnostic, not an output: the answer goes
+ * back over SCPI, and 64 lines at 115200 baud cost about 320 ms of cycle time
+ * for something a production run never reads. Turn it on with STARTUP:TRACE
+ * when a device needs looking at.
+ *
+ * The cap matters. A capture can hold thousands of windows (65535 entries
+ * over an 8-entry window is 8191 of them), and printing one line each would
+ * hold the link for tens of seconds.
+ */
+#define STARTUP_TRACE_DEFAULT   0
+#define STARTUP_TRACE_MAX       256
 #define STARTUP_TRIG_TIMEOUT_MS 10000   /* how long to wait for CTR_START_T */
 
 /*
@@ -312,6 +327,7 @@ extern double GATE_TIME;            /* gate duration, ms */
 extern double PPM_RANGE;            /* allowed deviation, ppm; the start-up criterion */
 extern double STARTUP_SPAN;         /* start-up capture span, ms */
 extern double STARTUP_WIN;          /* start-up time resolution asked for, us */
+extern int    STARTUP_TRACE;        /* f(t) points printed on the console, 0 = off */
 
 extern u32 g_clk_fs_freq;
 extern u32 g_clk_fs_freq_sd;
@@ -400,9 +416,10 @@ int  ReadFr_TimestampMode(char *Freq);      /* DMA timestamps + least squares;
  * covers both "the crystal never settled" and "the instrument never got to
  * look".
  *
- * The frequency curve, the first-edge time and the resolution actually
- * achieved go to the serial console; the return value is the single number
- * the criterion produces.
+ * The configuration, the first-edge time and the resolution actually achieved
+ * go to the serial console; the return value is the single number the
+ * criterion produces. The f(t) curve itself is off by default -- see
+ * STARTUP_TRACE.
  *
  * Ordering matters and is not optional:
  *

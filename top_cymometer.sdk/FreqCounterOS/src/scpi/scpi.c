@@ -250,6 +250,43 @@ static int cmd_startup_win(const char *args, char *resp)
 }
 
 /*
+ * How many f(t) points a start-up measurement prints on the serial console.
+ * 0, the power-up default, prints none.
+ *
+ * Off by default because the curve is a diagnostic, not an output: the answer
+ * goes back over SCPI, while 64 lines at 115200 baud add about 320 ms to
+ * every measurement for something a production run never reads. Turn it on
+ * only while looking at a device.
+ *
+ * Clamped to 256. A capture can hold thousands of windows -- 65535 entries
+ * over an 8-entry window is 8191 of them -- and one line each would hold the
+ * link for tens of seconds.
+ *
+ * Note atoi() maps junk and a missing argument to 0, which here means "off"
+ * rather than "ignored". Read back with STARTUP:TRACE? when it matters.
+ */
+static int cmd_startup_trace_query(const char *args, char *resp)
+{
+	(void)args;
+	return snprintf(resp, SCPI_RESP_MAX, "%d\n", STARTUP_TRACE);
+}
+
+static int cmd_startup_trace(const char *args, char *resp)
+{
+	int v = atoi(args);
+
+	(void)resp;
+
+	if (v < 0)
+		return 0;
+	if (v > STARTUP_TRACE_MAX)
+		v = STARTUP_TRACE_MAX;
+
+	STARTUP_TRACE = v;
+	return 0;
+}
+
+/*
  * Start watching CTR_START_T. A write with no response, on purpose.
  *
  * The bench sequence is: open the DUT's VCC (CTR_START_T follows it low),
@@ -498,6 +535,8 @@ static const scpi_cmd_t g_scpi_cmds[] = {
 	{ "STARTUP:SPAN",     cmd_startup_span          },
 	{ "STARTUP:WIN?",     cmd_startup_win_query     },
 	{ "STARTUP:WIN",      cmd_startup_win           },
+	{ "STARTUP:TRACE?",   cmd_startup_trace_query   },
+	{ "STARTUP:TRACE",    cmd_startup_trace         },
 	{ "STARTUP:INIT",     cmd_startup_init          },
 	{ "STARTUP:TIME?",    cmd_startup_time          },
 	{ "SIG:PRIREF",       cmd_sig_priref            },
